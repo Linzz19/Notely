@@ -34,6 +34,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [3/3] Packaging standalone Windows .exe files...
+set CSC_IDENTITY_AUTO_DISCOVERY=false
 call npx electron-builder --win --config electron-builder.yml
 if %errorlevel% neq 0 (
   echo [ERROR] Packaging Windows .exe failed.

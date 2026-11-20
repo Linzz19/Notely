@@ -40,11 +40,11 @@ function getWindowStatePath() {
 }
 
 function getIconPath() {
-  const packagedIcon = path.join(process.resourcesPath || '', 'build', 'icon.png');
+  const packagedIcon = path.join(process.resourcesPath || '', 'electron', 'icon.png');
   if (app.isPackaged && fs.existsSync(packagedIcon)) {
     return packagedIcon;
   }
-  const localIcon = path.join(__dirname, '..', 'build', 'icon.png');
+  const localIcon = path.join(__dirname, 'icon.png');
   return fs.existsSync(localIcon) ? localIcon : undefined;
 }
 

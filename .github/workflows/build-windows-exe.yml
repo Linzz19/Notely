@@ -20,9 +20,11 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: Build Windows .exe (Portable + Installer)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run dist:win
 
       - name: Upload Notely Windows Executables
