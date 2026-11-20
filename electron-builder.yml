@@ -1,0 +1,32 @@
+appId: com.notely.desktop
+productName: Notely
+copyright: Copyright © Notely
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+extraResources:
+  - from: build/icon.png
+    to: build/icon.png
+win:
+  icon: build/icon.png
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+portable:
+  artifactName: Notely-${version}-Portable.exe
+nsis:
+  artifactName: Notely-Setup-${version}.exe
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Notely

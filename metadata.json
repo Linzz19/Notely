@@ -1,0 +1,8 @@
+{
+  "name": "Notely",
+  "description": "Lightweight Windows Fluent-style template workspace for daily chat, email, and documentation snippets with Tab > Category > Template organization, variable quick-fill, Ctrl+K command palette, and format-preserving clipboard copy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
