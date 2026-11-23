@@ -1,9 +1,11 @@
 appId: com.notely.desktop
 productName: Notely
-copyright: Copyright © Notely
+copyright: Copyright (c) Notely
+compression: normal
 directories:
   output: release
 npmRebuild: false
+buildDependenciesFromSource: false
 files:
   - dist/**/*
   - electron/**/*
@@ -26,6 +28,7 @@ portable:
   artifactName: Notely-${version}-Portable.exe
 nsis:
   artifactName: Notely-Setup-${version}.exe
+  warningsAsErrors: false
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
