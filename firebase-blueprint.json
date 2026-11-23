@@ -2,7 +2,7 @@
   "entities": {
     "UserWorkspaceSettings": {
       "title": "UserWorkspaceSettings",
-      "description": "Private workspace preferences and sync metadata owned by a single authenticated user.",
+      "description": "Private workspace preferences and optional end-to-end encryption metadata owned by a single Google-authenticated user.",
       "type": "object",
       "properties": {
         "ownerId": {
@@ -46,6 +46,22 @@
           "enum": ["updated", "usage", "title"],
           "description": "Selected template list sort order."
         },
+        "encryptionEnabled": {
+          "type": "boolean",
+          "description": "Whether client-side AES-256-GCM end-to-end encryption is active for synced workspace content."
+        },
+        "encryptionSalt": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(|[A-Za-z0-9_\\-]{16,64})$",
+          "description": "Non-secret random PBKDF2 salt (base64url) used to derive the user's AES-256-GCM key locally."
+        },
+        "encryptionVerifier": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^(|enc:v1:[A-Za-z0-9_\\-]{12,32}:[A-Za-z0-9_\\-]{16,200})$",
+          "description": "AES-256-GCM encrypted verification sentinel used locally to verify the sync passphrase without ever storing the passphrase."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -70,7 +86,7 @@
     },
     "WorkspaceTabDoc": {
       "title": "WorkspaceTabDoc",
-      "description": "A top-level project workspace tab owned by a single user.",
+      "description": "A top-level project workspace tab owned by a single user (supports plaintext or AES-256-GCM encrypted name).",
       "type": "object",
       "properties": {
         "ownerId": {
@@ -83,8 +99,8 @@
         "name": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 64,
-          "description": "Display name of the project tab."
+          "maxLength": 512,
+          "description": "Display name of the project tab (plaintext up to 64 chars or AES-256-GCM ciphertext)."
         },
         "order": {
           "type": "number",
@@ -105,7 +121,7 @@
     },
     "TemplateCategoryDoc": {
       "title": "TemplateCategoryDoc",
-      "description": "A category inside a project tab owned by a single user.",
+      "description": "A category inside a project tab owned by a single user (supports plaintext or AES-256-GCM encrypted name).",
       "type": "object",
       "properties": {
         "ownerId": {
@@ -125,8 +141,8 @@
         "name": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 64,
-          "description": "Category display name."
+          "maxLength": 512,
+          "description": "Category display name (plaintext up to 64 chars or AES-256-GCM ciphertext)."
         },
         "order": {
           "type": "number",
@@ -154,7 +170,7 @@
     },
     "SnippetTemplateDoc": {
       "title": "SnippetTemplateDoc",
-      "description": "A reusable text/Markdown template owned by a single user.",
+      "description": "A reusable text/Markdown template owned by a single user (supports plaintext or AES-256-GCM encrypted title, content, and tags).",
       "type": "object",
       "properties": {
         "ownerId": {
@@ -179,17 +195,17 @@
         },
         "title": {
           "type": "string",
-          "maxLength": 160,
-          "description": "Template title."
+          "maxLength": 1024,
+          "description": "Template title (plaintext up to 160 chars or AES-256-GCM ciphertext)."
         },
         "content": {
           "type": "string",
-          "maxLength": 50000,
-          "description": "Template Markdown body."
+          "maxLength": 120000,
+          "description": "Template Markdown body (plaintext up to 50000 chars or AES-256-GCM ciphertext)."
         },
         "tags": {
           "type": "array",
-          "description": "Bounded list of up to 15 searchable tag strings."
+          "description": "Bounded list of up to 15 searchable tag strings (plaintext or AES-256-GCM ciphertext)."
         },
         "usageCount": {
           "type": "number",
@@ -228,7 +244,7 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserWorkspaceSettings" },
-      "description": "Owner-only private workspace settings and sync metadata for a signed-in Notely user."
+      "description": "Owner-only private workspace settings and optional E2EE metadata for a Google-authenticated Notely user."
     },
     "/users/{userId}/tabs/{tabId}": {
       "schema": { "$ref": "#/entities/WorkspaceTabDoc" },

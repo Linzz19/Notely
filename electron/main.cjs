@@ -7,12 +7,16 @@ const {
   ipcMain,
   Menu,
   nativeImage,
+  safeStorage,
   shell,
   Tray,
 } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+
+const MAX_WORKSPACE_BYTES = 20 * 1024 * 1024; // 20 MB safety bound
+const DPAPI_ENVELOPE_FORMAT = 'dpapi-v1';
 
 let autoUpdater = null;
 try {
@@ -61,16 +65,58 @@ function startLocalAppServer() {
   if (localAppUrl) return Promise.resolve(localAppUrl);
 
   const distDir = path.resolve(__dirname, '..', 'dist');
+  const distDirPrefix = distDir + path.sep;
+  let boundPort = LOCAL_APP_PORT;
+
+  const CSP_POLICY = [
+    "default-src 'self'",
+    "script-src 'self' https://apis.google.com https://accounts.google.com https://www.gstatic.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: https://*.googleusercontent.com https://*.gstatic.com",
+    "connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://*.firebaseio.com wss://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com",
+    "frame-src https://*.firebaseapp.com https://accounts.google.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
 
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      const reqPath = decodeURIComponent((req.url || '/').split('?')[0]);
+      // Allow GET and HEAD only
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Method Not Allowed');
+        return;
+      }
+
+      // DNS rebinding guard: accept only local loopback Host headers
+      const hostHeader = String(req.headers.host || '').toLowerCase();
+      const allowedHosts = new Set([
+        `localhost:${boundPort}`,
+        `127.0.0.1:${boundPort}`,
+      ]);
+      if (!allowedHosts.has(hostHeader)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden');
+        return;
+      }
+
+      let reqPath = '/';
+      try {
+        reqPath = decodeURIComponent((req.url || '/').split('?')[0]);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Bad Request');
+        return;
+      }
+
       const relativePath = reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, '');
       let filePath = path.resolve(distDir, relativePath);
 
-      // Strict path traversal protection
-      if (!filePath.startsWith(distDir)) {
-        res.writeHead(403);
+      // Strict trailing-separator path traversal confinement
+      if (filePath !== distDir && !filePath.startsWith(distDirPrefix)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Forbidden');
         return;
       }
@@ -83,15 +129,24 @@ function startLocalAppServer() {
       res.writeHead(200, {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
         'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000',
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+        'Content-Security-Policy': CSP_POLICY,
       });
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
       fs.createReadStream(filePath).pipe(res);
     });
 
     const onListening = () => {
       const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : LOCAL_APP_PORT;
+      boundPort = typeof address === 'object' && address ? address.port : LOCAL_APP_PORT;
       localAppServer = server;
-      localAppUrl = `http://localhost:${port}`;
+      localAppUrl = `http://localhost:${boundPort}`;
       resolve(localAppUrl);
     };
 
@@ -176,6 +231,49 @@ function atomicWriteJson(filePath, dataString) {
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, dataString, 'utf8');
   fs.renameSync(tmpPath, filePath);
+}
+
+/**
+ * Encrypts workspace JSON at rest using the OS native credential store
+ * (Windows DPAPI via Electron safeStorage) when available.
+ */
+function encodeWorkspaceForDisk(jsonString) {
+  try {
+    if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      const encryptedBuf = safeStorage.encryptString(jsonString);
+      return JSON.stringify({
+        __notelyEncrypted: DPAPI_ENVELOPE_FORMAT,
+        data: encryptedBuf.toString('base64'),
+      });
+    }
+  } catch {
+    // Fall back to plaintext JSON if OS credential store is unavailable
+  }
+  return jsonString;
+}
+
+/**
+ * Transparently decrypts DPAPI-encrypted workspace.json files while remaining
+ * backward-compatible with older plaintext workspace.json files.
+ */
+function decodeWorkspaceFromDisk(rawString) {
+  try {
+    const parsed = JSON.parse(rawString);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      parsed.__notelyEncrypted === DPAPI_ENVELOPE_FORMAT &&
+      typeof parsed.data === 'string'
+    ) {
+      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+        return safeStorage.decryptString(Buffer.from(parsed.data, 'base64'));
+      }
+      return null;
+    }
+  } catch {
+    // Return raw content for caller validation
+  }
+  return rawString;
 }
 
 function canConfigureStartup() {
@@ -441,7 +539,11 @@ const PRESET_FRAME_OVERLAYS = {
 function readInitialTheme() {
   try {
     const raw = fs.readFileSync(getWorkspaceFilePath(), 'utf8');
-    const parsed = JSON.parse(raw);
+    const decoded = decodeWorkspaceFromDisk(raw);
+    if (!decoded) {
+      throw new Error('Encrypted workspace unavailable before ready');
+    }
+    const parsed = JSON.parse(decoded);
     const mode = parsed?.theme === 'dark' ? 'dark' : 'light';
     const presetKey =
       typeof parsed?.themePreset === 'string' && PRESET_FRAME_OVERLAYS[parsed.themePreset]
@@ -563,6 +665,22 @@ function createMainWindow() {
     return { action: 'deny' };
   });
 
+  // Lock main window navigation to Notely's own local origin only
+  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    try {
+      const parsed = new URL(targetUrl);
+      const isLocalOrigin =
+        (parsed.protocol === 'http:' &&
+          (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) ||
+        parsed.protocol === 'file:';
+      if (!isLocalOrigin) {
+        event.preventDefault();
+      }
+    } catch {
+      event.preventDefault();
+    }
+  });
+
   // Honor user's Close Button (X) preference: Minimize to Tray vs Exit App
   mainWindow.on('close', (e) => {
     saveWindowState(mainWindow);
@@ -660,16 +778,22 @@ function registerIpcHandlers() {
     const filePath = getWorkspaceFilePath();
     try {
       if (!fs.existsSync(filePath)) return null;
-      return fs.readFileSync(filePath, 'utf8');
+      const raw = fs.readFileSync(filePath, 'utf8');
+      return decodeWorkspaceFromDisk(raw);
     } catch {
       return null;
     }
   });
 
   ipcMain.handle('workspace:save', (_event, jsonString) => {
-    if (typeof jsonString !== 'string') return false;
+    if (
+      typeof jsonString !== 'string' ||
+      Buffer.byteLength(jsonString, 'utf8') > MAX_WORKSPACE_BYTES
+    ) {
+      return false;
+    }
     try {
-      atomicWriteJson(getWorkspaceFilePath(), jsonString);
+      atomicWriteJson(getWorkspaceFilePath(), encodeWorkspaceForDisk(jsonString));
       return true;
     } catch {
       return false;
@@ -756,10 +880,16 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('backup:export', async (_event, defaultFilename, jsonString) => {
-    if (!mainWindow) return { canceled: true };
+    if (
+      !mainWindow ||
+      typeof jsonString !== 'string' ||
+      Buffer.byteLength(jsonString, 'utf8') > MAX_WORKSPACE_BYTES
+    ) {
+      return { canceled: true };
+    }
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Export Notely Workspace Backup',
-      defaultPath: defaultFilename,
+      defaultPath: String(defaultFilename || 'notely-backup.json'),
       filters: [{ name: 'JSON Backup', extensions: ['json'] }],
     });
 
@@ -784,6 +914,10 @@ function registerIpcHandlers() {
     }
 
     const filePath = result.filePaths[0];
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_WORKSPACE_BYTES) {
+      return { canceled: true };
+    }
     const content = fs.readFileSync(filePath, 'utf8');
     return { canceled: false, filePath, content };
   });

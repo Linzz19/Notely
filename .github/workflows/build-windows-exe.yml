@@ -52,6 +52,19 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Inject Firebase config from GitHub Secret (optional)
+        shell: pwsh
+        env:
+          FIREBASE_APPLET_CONFIG: ${{ secrets.FIREBASE_APPLET_CONFIG }}
+        run: |
+          if ($env:FIREBASE_APPLET_CONFIG) {
+            [System.IO.File]::WriteAllText("$PWD\firebase-applet-config.json", $env:FIREBASE_APPLET_CONFIG)
+            Write-Host "Loaded firebase-applet-config.json from GitHub Secret."
+          } elseif (!(Test-Path "firebase-applet-config.json")) {
+            Write-Error "Missing firebase-applet-config.json. Add it as repository secret FIREBASE_APPLET_CONFIG."
+            exit 1
+          }
+
       - name: Build UI bundle
         env:
           VITE_APP_VERSION: ${{ env.APP_VERSION }}

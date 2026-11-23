@@ -15,7 +15,9 @@ service cloud.firestore {
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.firebase.sign_in_provider == 'google.com';
     }
 
     function isOwner(userId) {
@@ -47,11 +49,32 @@ service cloud.firestore {
              existsAfter(/databases/$(database)/documents/users/$(userId));
     }
 
-    // Pillar 5: Bounded array validation with element type guard
+    // Pillar 5: Bounded array validation with element type & ciphertext-safe size guard
     function isValidTagList(tags) {
       return tags is list &&
              tags.size() <= 15 &&
-             (tags.size() == 0 || (tags[0] is string && tags[0].size() >= 1 && tags[0].size() <= 32));
+             (tags.size() == 0 || (tags[0] is string && tags[0].size() >= 1 && tags[0].size() <= 256));
+    }
+
+    // Optional E2EE metadata validation (zero-knowledge salt + sentinel verifier only)
+    function isValidEncryptionConfig(data) {
+      return (
+        !('encryptionEnabled' in data) &&
+        !('encryptionSalt' in data) &&
+        !('encryptionVerifier' in data)
+      ) || (
+        ('encryptionEnabled' in data) &&
+        ('encryptionSalt' in data) &&
+        ('encryptionVerifier' in data) &&
+        data.encryptionEnabled is bool &&
+        data.encryptionSalt is string &&
+        data.encryptionSalt.size() <= 64 &&
+        data.encryptionSalt.matches('^(|[A-Za-z0-9_\\-]{16,64})$') &&
+        data.encryptionVerifier is string &&
+        data.encryptionVerifier.size() <= 256 &&
+        data.encryptionVerifier.matches('^(|enc:v1:[A-Za-z0-9_\\-]{12,32}:[A-Za-z0-9_\\-]{16,200})$') &&
+        (!data.encryptionEnabled || (data.encryptionSalt.size() >= 16 && data.encryptionVerifier.size() >= 32))
+      );
     }
 
     // ---------------------------------------------------------
@@ -77,6 +100,7 @@ service cloud.firestore {
              data.sortBy is string &&
              data.sortBy.size() <= 16 &&
              data.sortBy in ['updated', 'usage', 'title'] &&
+             isValidEncryptionConfig(data) &&
              data.createdAt is timestamp &&
              data.updatedAt is timestamp;
     }
@@ -89,7 +113,7 @@ service cloud.firestore {
              data.ownerId == request.auth.uid &&
              data.name is string &&
              data.name.size() >= 1 &&
-             data.name.size() <= 64 &&
+             data.name.size() <= 512 &&
              data.order is number &&
              data.order >= 0 &&
              data.order <= 1000 &&
@@ -106,7 +130,7 @@ service cloud.firestore {
              isValidId(data.tabId) &&
              data.name is string &&
              data.name.size() >= 1 &&
-             data.name.size() <= 64 &&
+             data.name.size() <= 512 &&
              data.order is number &&
              data.order >= 0 &&
              data.order <= 1000 &&
@@ -123,9 +147,9 @@ service cloud.firestore {
              isValidId(data.tabId) &&
              isValidOptionalId(data.categoryId) &&
              data.title is string &&
-             data.title.size() <= 160 &&
+             data.title.size() <= 1024 &&
              data.content is string &&
-             data.content.size() <= 50000 &&
+             data.content.size() <= 120000 &&
              isValidTagList(data.tags) &&
              data.usageCount is number &&
              data.usageCount >= 0 &&
@@ -147,7 +171,7 @@ service cloud.firestore {
                        isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().keys().hasAll(['ownerId', 'theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['ownerId', 'theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerId', 'theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'encryptionEnabled', 'encryptionSalt', 'encryptionVerifier', 'createdAt', 'updatedAt']) &&
                        isValidUserSettings(incoming(), userId) &&
                        incoming().createdAt == request.time &&
                        incoming().updatedAt == request.time;
@@ -160,7 +184,11 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        incoming().updatedAt == request.time && (
                          // Action: Update appearance or workspace preferences
-                         incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'updatedAt'])
+                         incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'updatedAt']) ||
+                         // Action: Configure or toggle client-side E2EE vault metadata
+                         incoming().diff(existing()).affectedKeys().hasOnly(['encryptionEnabled', 'encryptionSalt', 'encryptionVerifier', 'updatedAt']) ||
+                         // Action: Combined workspace settings and encryption sync
+                         incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'encryptionEnabled', 'encryptionSalt', 'encryptionVerifier', 'updatedAt'])
                        );
 
       allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId);
@@ -191,7 +219,7 @@ service cloud.firestore {
                          incoming().ownerId == existing().ownerId &&
                          incoming().createdAt == existing().createdAt &&
                          incoming().updatedAt == request.time && (
-                           // Action: Rename or reorder tab
+                           // Action: Rename or reorder tab (supports E2EE ciphertext re-encryption)
                            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'order', 'updatedAt'])
                          ) &&
                          parentUserExists(userId);
@@ -225,7 +253,7 @@ service cloud.firestore {
                          incoming().ownerId == existing().ownerId &&
                          incoming().createdAt == existing().createdAt &&
                          incoming().updatedAt == request.time && (
-                           // Action: Rename, reorder, or move category
+                           // Action: Rename, reorder, or move category (supports E2EE ciphertext re-encryption)
                            incoming().diff(existing()).affectedKeys().hasOnly(['tabId', 'name', 'order', 'updatedAt'])
                          ) &&
                          parentUserExists(userId);
@@ -263,7 +291,7 @@ service cloud.firestore {
                            incoming().diff(existing()).affectedKeys().hasOnly(['tabId', 'categoryId', 'title', 'content', 'tags', 'updatedAt']) ||
                            // Action: Record clipboard copy usage increment
                            incoming().diff(existing()).affectedKeys().hasOnly(['usageCount', 'lastCopiedAt', 'updatedAt']) ||
-                           // Action: Full template sync update (e.g., backup import/merge)
+                           // Action: Full template sync update (e.g., backup import, merge, or E2EE re-encryption)
                            incoming().diff(existing()).affectedKeys().hasOnly(['tabId', 'categoryId', 'title', 'content', 'tags', 'usageCount', 'lastCopiedAt', 'updatedAt'])
                          ) &&
                          parentUserExists(userId);

@@ -12,6 +12,7 @@ import { TemplateListPane } from './components/TemplateListPane';
 import { ToastContainer } from './components/ToastContainer';
 import { TopTabBar } from './components/TopTabBar';
 import { UpdateBanner } from './components/UpdateBanner';
+import { VaultModal, VaultModalMode } from './components/VaultModal';
 import { VersionHistoryModal } from './components/VersionHistoryModal';
 import { createStarterWorkspace } from './data/starterWorkspace';
 import { auth, signInWithGoogle, signOutAccount } from './firebase';
@@ -34,6 +35,7 @@ import {
   WorkspaceTab,
 } from './types/workspace';
 import {
+  CloudEncryptionConfig,
   CloudWorkspaceSnapshot,
   combineLocalAndCloudWorkspaces,
   fetchCloudWorkspace,
@@ -42,6 +44,7 @@ import {
   subscribeToCloudWorkspace,
   syncWorkspaceDiffToCloud,
 } from './utils/cloudSync';
+import { createVaultConfig, unlockVaultKey } from './utils/crypto';
 import {
   loadDesktopWorkspace,
   loadWorkspace,
@@ -117,6 +120,18 @@ export default function App() {
     uid: string;
     cloudSnapshot: CloudWorkspaceSnapshot;
   } | null>(null);
+  const [encryptionConfig, setEncryptionConfig] =
+    useState<CloudEncryptionConfig>({
+      enabled: false,
+      salt: '',
+      verifier: '',
+    });
+  const [isVaultUnlocked, setIsVaultUnlocked] = useState(false);
+  const [vaultModalMode, setVaultModalMode] = useState<VaultModalMode | null>(
+    null
+  );
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [vaultError, setVaultError] = useState<string | null>(null);
 
   const desktopHydratedRef = useRef(!isDesktopApp);
   const desktopHydrationResolveRef = useRef<(() => void) | null>(null);
@@ -129,6 +144,9 @@ export default function App() {
   );
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
+  const encryptionKeyRef = useRef<CryptoKey | null>(null);
+  const encryptionConfigRef = useRef(encryptionConfig);
+  encryptionConfigRef.current = encryptionConfig;
   const cloudReadyRef = useRef(false);
   const isApplyingRemoteRef = useRef(false);
   const lastCloudSnapshotRef = useRef<CloudWorkspaceSnapshot | null>(null);
@@ -250,8 +268,29 @@ export default function App() {
     cloudUnsubRef.current?.();
     cloudUnsubRef.current = subscribeToCloudWorkspace(
       uid,
+      () => encryptionKeyRef.current,
       (remoteSnapshot) => {
         if (!remoteSnapshot.exists) return;
+
+        if (remoteSnapshot.settings) {
+          const nextEnc: CloudEncryptionConfig = {
+            enabled: remoteSnapshot.settings.encryptionEnabled,
+            salt: remoteSnapshot.settings.encryptionSalt,
+            verifier: remoteSnapshot.settings.encryptionVerifier,
+          };
+          setEncryptionConfig(nextEnc);
+          encryptionConfigRef.current = nextEnc;
+        }
+
+        if (remoteSnapshot.requiresUnlock) {
+          cloudReadyRef.current = false;
+          setIsVaultUnlocked(false);
+          setCloudSyncStatus('locked');
+          setVaultError(null);
+          setVaultModalMode('unlock');
+          return;
+        }
+
         lastCloudSnapshotRef.current = remoteSnapshot;
         isApplyingRemoteRef.current = true;
         setWorkspace((prev) =>
@@ -284,7 +323,7 @@ export default function App() {
       setAuthUser(user);
       setAuthLoading(false);
 
-      // Tear down previous sync session cleanly
+      // Tear down previous sync session and wipe any in-memory E2EE key
       cloudUnsubRef.current?.();
       cloudUnsubRef.current = null;
       if (syncTimerRef.current) {
@@ -293,6 +332,17 @@ export default function App() {
       }
       cloudReadyRef.current = false;
       lastCloudSnapshotRef.current = null;
+      encryptionKeyRef.current = null;
+      const emptyEnc: CloudEncryptionConfig = {
+        enabled: false,
+        salt: '',
+        verifier: '',
+      };
+      encryptionConfigRef.current = emptyEnc;
+      setEncryptionConfig(emptyEnc);
+      setIsVaultUnlocked(false);
+      setVaultModalMode(null);
+      setVaultError(null);
       setPendingCloudConflict(null);
 
       if (!user) {
@@ -309,7 +359,10 @@ export default function App() {
         try {
           await desktopHydrationPromiseRef.current;
           if (cancelled) return;
-          const cloudSnapshot = await fetchCloudWorkspace(user.uid);
+          const cloudSnapshot = await fetchCloudWorkspace(
+            user.uid,
+            encryptionKeyRef.current
+          );
           if (cancelled) return;
 
           if (!cloudSnapshot.exists) {
@@ -317,7 +370,11 @@ export default function App() {
             const uploaded = await syncWorkspaceDiffToCloud(
               user.uid,
               workspaceRef.current,
-              null
+              null,
+              {
+                encryptionKey: encryptionKeyRef.current,
+                encryptionConfig: encryptionConfigRef.current,
+              }
             );
             if (cancelled) return;
             lastCloudSnapshotRef.current = uploaded;
@@ -325,6 +382,25 @@ export default function App() {
             setCloudSyncStatus('synced');
             setLastSyncedAt(new Date().toISOString());
             startLiveCloudSubscription(user.uid);
+            return;
+          }
+
+          if (cloudSnapshot.settings) {
+            const remoteEnc: CloudEncryptionConfig = {
+              enabled: cloudSnapshot.settings.encryptionEnabled,
+              salt: cloudSnapshot.settings.encryptionSalt,
+              verifier: cloudSnapshot.settings.encryptionVerifier,
+            };
+            encryptionConfigRef.current = remoteEnc;
+            setEncryptionConfig(remoteEnc);
+          }
+
+          // If cloud workspace uses AES-256-GCM E2EE, pause and prompt for passphrase
+          if (cloudSnapshot.requiresUnlock) {
+            setIsVaultUnlocked(false);
+            setCloudSyncStatus('locked');
+            setVaultError(null);
+            setVaultModalMode('unlock');
             return;
           }
 
@@ -396,7 +472,11 @@ export default function App() {
       void syncWorkspaceDiffToCloud(
         uid,
         workspaceRef.current,
-        lastCloudSnapshotRef.current
+        lastCloudSnapshotRef.current,
+        {
+          encryptionKey: encryptionKeyRef.current,
+          encryptionConfig: encryptionConfigRef.current,
+        }
       )
         .then((nextSnapshot) => {
           lastCloudSnapshotRef.current = nextSnapshot;
@@ -433,7 +513,11 @@ export default function App() {
       void syncWorkspaceDiffToCloud(
         authUser.uid,
         workspaceRef.current,
-        lastCloudSnapshotRef.current
+        lastCloudSnapshotRef.current,
+        {
+          encryptionKey: encryptionKeyRef.current,
+          encryptionConfig: encryptionConfigRef.current,
+        }
       )
         .then((nextSnapshot) => {
           lastCloudSnapshotRef.current = nextSnapshot;
@@ -478,6 +562,7 @@ export default function App() {
 
   const handleSignOutGoogle = useCallback(async () => {
     try {
+      encryptionKeyRef.current = null;
       await signOutAccount();
       pushToast('Signed out', 'info', 'Your templates remain saved locally.');
     } catch {
@@ -493,7 +578,11 @@ export default function App() {
       const nextSnapshot = await syncWorkspaceDiffToCloud(
         authUser.uid,
         workspaceRef.current,
-        lastCloudSnapshotRef.current
+        lastCloudSnapshotRef.current,
+        {
+          encryptionKey: encryptionKeyRef.current,
+          encryptionConfig: encryptionConfigRef.current,
+        }
       );
       lastCloudSnapshotRef.current = nextSnapshot;
       setCloudSyncStatus('synced');
@@ -508,6 +597,148 @@ export default function App() {
           : 'Sync failed. Check your connection and try again.'
       );
       pushToast('Cloud sync failed', 'error');
+    }
+  }, [authUser, pushToast]);
+
+  const handleVaultSubmitPassphrase = useCallback(
+    async (passphrase: string) => {
+      if (!authUser || !vaultModalMode) return;
+      setVaultBusy(true);
+      setVaultError(null);
+
+      try {
+        if (vaultModalMode === 'setup') {
+          const setup = await createVaultConfig(passphrase);
+          const nextEnc: CloudEncryptionConfig = {
+            enabled: true,
+            salt: setup.salt,
+            verifier: setup.verifier,
+          };
+
+          setCloudSyncStatus('syncing');
+          const synced = await syncWorkspaceDiffToCloud(
+            authUser.uid,
+            workspaceRef.current,
+            lastCloudSnapshotRef.current,
+            {
+              encryptionKey: setup.key,
+              encryptionConfig: nextEnc,
+              forceReencryptAll: true,
+            }
+          );
+
+          encryptionKeyRef.current = setup.key;
+          encryptionConfigRef.current = nextEnc;
+          setEncryptionConfig(nextEnc);
+          setIsVaultUnlocked(true);
+          lastCloudSnapshotRef.current = synced;
+          cloudReadyRef.current = true;
+          setCloudSyncStatus('synced');
+          setLastSyncedAt(new Date().toISOString());
+          setVaultModalMode(null);
+          pushToast(
+            'End-to-end encryption enabled',
+            'success',
+            'All cloud tabs, categories, templates, and tags are now AES-256-GCM encrypted.'
+          );
+          return;
+        }
+
+        if (vaultModalMode === 'unlock') {
+          const currentEnc = encryptionConfigRef.current;
+          const key = await unlockVaultKey(
+            passphrase,
+            currentEnc.salt,
+            currentEnc.verifier
+          );
+          if (!key) {
+            setVaultError('Incorrect passphrase. Please try again.');
+            return;
+          }
+
+          encryptionKeyRef.current = key;
+          setIsVaultUnlocked(true);
+          setCloudSyncStatus('syncing');
+
+          const decryptedSnapshot = await fetchCloudWorkspace(authUser.uid, key);
+          setVaultModalMode(null);
+
+          const localNow = workspaceRef.current;
+          const cloudIds = new Set(decryptedSnapshot.templates.map((t) => t.id));
+          const hasLocalOnlyCustom =
+            hasCustomLocalContent(localNow) &&
+            localNow.templates.some((t) => !cloudIds.has(t.id));
+
+          if (hasLocalOnlyCustom && decryptedSnapshot.templates.length > 0) {
+            setPendingCloudConflict({
+              uid: authUser.uid,
+              cloudSnapshot: decryptedSnapshot,
+            });
+            setCloudSyncStatus('synced');
+            return;
+          }
+
+          lastCloudSnapshotRef.current = decryptedSnapshot;
+          isApplyingRemoteRef.current = true;
+          setWorkspace((prev) =>
+            mergeSnapshotIntoLocalWorkspace(prev, decryptedSnapshot)
+          );
+          window.setTimeout(() => {
+            isApplyingRemoteRef.current = false;
+          }, 50);
+          cloudReadyRef.current = true;
+          setCloudSyncStatus('synced');
+          setLastSyncedAt(new Date().toISOString());
+          startLiveCloudSubscription(authUser.uid);
+          pushToast('Encrypted vault unlocked', 'success');
+        }
+      } catch {
+        setVaultError('Encryption operation failed. Please check your connection and try again.');
+        setCloudSyncStatus('error');
+      } finally {
+        setVaultBusy(false);
+      }
+    },
+    [authUser, vaultModalMode, startLiveCloudSubscription, pushToast]
+  );
+
+  const handleVaultDisableEncryption = useCallback(async () => {
+    if (!authUser || !encryptionKeyRef.current) return;
+    setVaultBusy(true);
+    setVaultError(null);
+    try {
+      const nextEnc: CloudEncryptionConfig = {
+        enabled: false,
+        salt: '',
+        verifier: '',
+      };
+      setCloudSyncStatus('syncing');
+      const synced = await syncWorkspaceDiffToCloud(
+        authUser.uid,
+        workspaceRef.current,
+        lastCloudSnapshotRef.current,
+        {
+          encryptionKey: null,
+          encryptionConfig: nextEnc,
+          forceReencryptAll: true,
+        }
+      );
+
+      encryptionKeyRef.current = null;
+      encryptionConfigRef.current = nextEnc;
+      setEncryptionConfig(nextEnc);
+      setIsVaultUnlocked(false);
+      lastCloudSnapshotRef.current = synced;
+      cloudReadyRef.current = true;
+      setCloudSyncStatus('synced');
+      setLastSyncedAt(new Date().toISOString());
+      setVaultModalMode(null);
+      pushToast('End-to-end encryption turned off', 'info');
+    } catch {
+      setVaultError('Could not update cloud encryption right now.');
+      setCloudSyncStatus('error');
+    } finally {
+      setVaultBusy(false);
     }
   }, [authUser, pushToast]);
 
@@ -546,7 +777,11 @@ export default function App() {
         const synced = await syncWorkspaceDiffToCloud(
           uid,
           nextWorkspace,
-          cloudSnapshot
+          cloudSnapshot,
+          {
+            encryptionKey: encryptionKeyRef.current,
+            encryptionConfig: encryptionConfigRef.current,
+          }
         );
         lastCloudSnapshotRef.current = synced;
         window.setTimeout(() => {
@@ -1421,9 +1656,23 @@ export default function App() {
         cloudSyncStatus={cloudSyncStatus}
         lastSyncedAt={lastSyncedAt}
         cloudSyncError={cloudSyncError}
+        encryptionEnabled={encryptionConfig.enabled}
+        encryptionUnlocked={isVaultUnlocked}
         onSignInGoogle={() => void handleSignInGoogle()}
         onSignOutGoogle={() => void handleSignOutGoogle()}
         onSyncNow={() => void handleManualCloudSync()}
+        onOpenVaultSetup={() => {
+          setVaultError(null);
+          setVaultModalMode('setup');
+        }}
+        onOpenVaultUnlock={() => {
+          setVaultError(null);
+          setVaultModalMode('unlock');
+        }}
+        onOpenVaultDisable={() => {
+          setVaultError(null);
+          setVaultModalMode('disable');
+        }}
         onSelectTab={handleSelectTab}
         onCreateTab={handleCreateTab}
         onRenameTab={handleRenameTab}
@@ -1624,6 +1873,22 @@ export default function App() {
           onCancel={() => {
             setPendingCloudConflict(null);
             void handleSignOutGoogle();
+          }}
+        />
+      )}
+
+      {/* Zero-Knowledge AES-256-GCM Vault Setup / Unlock Modal */}
+      {vaultModalMode && (
+        <VaultModal
+          mode={vaultModalMode}
+          busy={vaultBusy}
+          error={vaultError}
+          onSubmitPassphrase={(pass) => void handleVaultSubmitPassphrase(pass)}
+          onDisableEncryption={() => void handleVaultDisableEncryption()}
+          onClose={() => {
+            if (vaultBusy) return;
+            setVaultModalMode(null);
+            setVaultError(null);
           }}
         />
       )}

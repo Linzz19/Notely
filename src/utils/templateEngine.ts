@@ -58,7 +58,7 @@ function escapeHtml(text: string): string {
 }
 
 function sanitizeUrl(url: string): string {
-  const trimmed = url.trim();
+  const trimmed = url.replace(/[\u0000-\u001F\u007F]/g, '').trim();
   if (
     trimmed.startsWith('https://') ||
     trimmed.startsWith('http://') ||
