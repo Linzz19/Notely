@@ -1,6 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
+  ChevronLeft,
+  ChevronRight,
   DatabaseBackup,
   GripVertical,
   HelpCircle,
@@ -101,13 +103,47 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   const [confirmDeleteTabId, setConfirmDeleteTabId] = useState<string | null>(null);
   const [dragState, setDragState] = useState<TabDragState | null>(null);
   const [isThemeSettingsOpen, setIsThemeSettingsOpen] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
 
+  const navScrollRef = useRef<HTMLElement>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const tabElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const suppressClickRef = useRef(false);
   const dragStateRef = useRef<TabDragState | null>(null);
   dragStateRef.current = dragState;
+
+  const updateScrollButtons = useCallback(() => {
+    const el = navScrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 4);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  }, []);
+
+  useEffect(() => {
+    const el = navScrollRef.current;
+    if (!el) return;
+    updateScrollButtons();
+
+    const observer = new ResizeObserver(() => updateScrollButtons());
+    observer.observe(el);
+    window.addEventListener('resize', updateScrollButtons);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateScrollButtons);
+    };
+  }, [tabs.length, confirmDeleteTabId, editingTabId, updateScrollButtons]);
+
+  // Keep active tab scrolled into view when switching tabs or resizing
+  useEffect(() => {
+    const activeEl = tabElementsRef.current.get(activeTabId);
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+    const timer = window.setTimeout(updateScrollButtons, 180);
+    return () => window.clearTimeout(timer);
+  }, [activeTabId, updateScrollButtons]);
 
   useEffect(() => {
     if (isAddingTab) {
@@ -199,7 +235,6 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         onReorderTabs(ids);
         setDragState(null);
       } else {
-        // Did not drag far enough to realign: smoothly glide back to original spot
         setDragState((prev) =>
           prev ? { ...prev, isReturning: true, deltaX: 0 } : null
         );
@@ -286,22 +321,39 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
     setEditingName('');
   };
 
+  const scrollTabsBy = (delta: number) => {
+    const el = navScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: delta, behavior: 'smooth' });
+  };
+
+  const handleNavWheel = (e: React.WheelEvent<HTMLElement>) => {
+    const el = navScrollRef.current;
+    if (!el) return;
+    if (el.scrollWidth <= el.clientWidth) return;
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      el.scrollLeft += e.deltaY;
+      updateScrollButtons();
+    }
+  };
+
   const isWindowsDesktop = Boolean(
     window.fluentDesktop?.isElectron && window.fluentDesktop?.platform === 'win32'
   );
 
   return (
     <header
-      className={`h-[52px] shrink-0 bg-[var(--surface-frame)] border-b border-[var(--surface-border)] pl-3 sm:pl-4 flex items-center justify-between gap-4 select-none ${
-        isWindowsDesktop ? 'app-drag-region pr-[144px]' : 'pr-3 sm:pr-4'
+      className={`h-[52px] shrink-0 bg-[var(--surface-frame)] border-b border-[var(--surface-border)] pl-3 sm:pl-4 flex items-center justify-between gap-2 sm:gap-3 select-none ${
+        isWindowsDesktop ? 'app-drag-region pr-[140px]' : 'pr-3 sm:pr-4'
       }`}
     >
-      {/* Zone 1: Mobile sidebar toggle + Single-line brand wordmark */}
-      <div className="flex items-center gap-2.5 shrink-0">
+      {/* Zone 1: Narrow-window categories toggle + Brand wordmark */}
+      <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
           onClick={onToggleMobileSidebar}
-          aria-label="Toggle categories panel"
+          aria-label="Toggle categories and tags"
+          title="Categories & Tags"
           className="app-no-drag lg:hidden p-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-300 dark:hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <Menu className="w-4 h-4" />
@@ -311,207 +363,239 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         </span>
       </div>
 
-      {/* Zone 2: Horizontal Project Tabs (Tab > Category > Template) */}
-      <nav
-        aria-label="Project workspace tabs"
-        className="flex-1 min-w-0 flex items-end h-full overflow-x-auto overflow-y-hidden gap-1 pt-2"
-      >
-        {sortedTabs.map((tab, index) => {
-          const isActive = tab.id === activeTabId;
-          const isEditing = editingTabId === tab.id;
-          const isConfirmingDelete = confirmDeleteTabId === tab.id;
+      {/* Zone 2: Horizontal Project Tabs + Pinned New Tab Control */}
+      <div className="flex-1 min-w-0 flex items-end h-full gap-1">
+        {canScrollLeft && (
+          <button
+            type="button"
+            onClick={() => scrollTabsBy(-160)}
+            aria-label="Scroll tabs left"
+            title="Scroll tabs left"
+            className="app-no-drag flex items-center justify-center w-6 h-[32px] mb-1 rounded-md text-slate-500 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 shrink-0 transition-colors"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+        )}
 
-          if (isEditing) {
-            return (
-              <form
-                key={tab.id}
-                onSubmit={handleEditSubmit}
-                className="flex items-center h-[36px] px-2 bg-[var(--surface-panel)] border border-[var(--accent)] rounded-t-md shrink-0"
-              >
-                <input
-                  ref={editInputRef}
-                  type="text"
-                  value={editingName}
-                  onChange={(e) => setEditingName(e.target.value)}
-                  onBlur={handleEditSubmit}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      setEditingTabId(null);
-                      setEditingName('');
-                    }
-                  }}
-                  maxLength={32}
-                  className="w-32 bg-transparent text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none"
-                />
-              </form>
-            );
-          }
+        <nav
+          ref={navScrollRef}
+          aria-label="Project workspace tabs"
+          onScroll={updateScrollButtons}
+          onWheel={handleNavWheel}
+          className="flex-1 min-w-0 flex items-end h-full overflow-x-auto overflow-y-hidden no-scrollbar gap-1 pt-2"
+        >
+          {sortedTabs.map((tab, index) => {
+            const isActive = tab.id === activeTabId;
+            const isEditing = editingTabId === tab.id;
+            const isConfirmingDelete = confirmDeleteTabId === tab.id;
 
-          if (isConfirmingDelete) {
+            if (isEditing) {
+              return (
+                <form
+                  key={tab.id}
+                  onSubmit={handleEditSubmit}
+                  className="app-no-drag flex items-center h-[36px] px-2 bg-[var(--surface-panel)] border border-[var(--accent)] rounded-t-md shrink-0"
+                >
+                  <input
+                    ref={editInputRef}
+                    type="text"
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onBlur={handleEditSubmit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setEditingTabId(null);
+                        setEditingName('');
+                      }
+                    }}
+                    maxLength={32}
+                    className="w-28 sm:w-32 bg-transparent text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </form>
+              );
+            }
+
+            if (isConfirmingDelete) {
+              return (
+                <div
+                  key={tab.id}
+                  className="app-no-drag flex items-center gap-1.5 h-[36px] px-2.5 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded-t-md shrink-0"
+                >
+                  <span className="text-xs font-medium text-red-700 dark:text-red-300 whitespace-nowrap max-w-[110px] truncate">
+                    Delete {tab.name}?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDeleteTab(tab.id);
+                      setConfirmDeleteTabId(null);
+                    }}
+                    className="app-no-drag px-1.5 py-0.5 text-[11px] font-semibold bg-red-600 text-white rounded hover:bg-red-700 transition-colors whitespace-nowrap"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteTabId(null)}
+                    className="app-no-drag px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              );
+            }
+
+            // Compute live horizontal transform during active pointer drag
+            let translateX = 0;
+            const isThisDragged =
+              dragState?.isDragging && dragState.tabId === tab.id;
+
+            if (dragState?.isDragging) {
+              if (isThisDragged) {
+                translateX = dragState.deltaX;
+              } else {
+                const draggedWidth =
+                  dragState.snapshots[dragState.startIdx]?.width ?? 120;
+                const shift = draggedWidth + dragState.gap;
+                if (
+                  dragState.startIdx < dragState.targetIdx &&
+                  index > dragState.startIdx &&
+                  index <= dragState.targetIdx
+                ) {
+                  translateX = -shift;
+                } else if (
+                  dragState.startIdx > dragState.targetIdx &&
+                  index < dragState.startIdx &&
+                  index >= dragState.targetIdx
+                ) {
+                  translateX = shift;
+                }
+              }
+            }
+
             return (
               <div
                 key={tab.id}
-                className="flex items-center gap-1.5 h-[36px] px-2.5 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded-t-md shrink-0"
+                ref={(el) => {
+                  if (el) {
+                    tabElementsRef.current.set(tab.id, el);
+                  } else {
+                    tabElementsRef.current.delete(tab.id);
+                  }
+                }}
+                onPointerDown={(e) => startTabPointerDown(e, tab.id, index)}
+                style={{
+                  transform:
+                    translateX !== 0
+                      ? `translate3d(${translateX}px, 0, 0)`
+                      : undefined,
+                  transition:
+                    isThisDragged && !dragState?.isReturning
+                      ? 'none'
+                      : dragState?.isDragging
+                        ? 'transform 150ms cubic-bezier(0.16, 1, 0.3, 1)'
+                        : undefined,
+                }}
+                className={`app-no-drag group relative flex items-center gap-1 h-[36px] pl-1.5 pr-2 rounded-t-md border-t border-x shrink-0 max-w-[172px] ${
+                  isThisDragged
+                    ? 'z-30 shadow-md cursor-grabbing bg-[var(--surface-elevated)] border-[var(--accent)] text-slate-900 dark:text-slate-100'
+                    : isActive
+                      ? 'z-10 cursor-grab bg-[var(--surface-panel)] border-[var(--surface-border)] text-slate-900 dark:text-slate-100 transition-colors'
+                      : 'cursor-grab bg-transparent border-transparent text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-200 transition-colors'
+                }`}
               >
-                <span className="text-xs font-medium text-red-700 dark:text-red-300 whitespace-nowrap">
-                  Delete {tab.name}?
-                </span>
+                <GripVertical className="w-3 h-3 text-slate-400/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -mr-0.5 pointer-events-none" />
+
                 <button
                   type="button"
                   onClick={() => {
-                    onDeleteTab(tab.id);
-                    setConfirmDeleteTabId(null);
+                    if (suppressClickRef.current) return;
+                    onSelectTab(tab.id);
                   }}
-                  className="px-1.5 py-0.5 text-[11px] font-semibold bg-red-600 text-white rounded hover:bg-red-700 transition-colors whitespace-nowrap"
-                >
-                  Delete
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteTabId(null)}
-                  className="px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
-                >
-                  Cancel
-                </button>
-              </div>
-            );
-          }
-
-          // Compute live horizontal transform during active pointer drag
-          let translateX = 0;
-          const isThisDragged =
-            dragState?.isDragging && dragState.tabId === tab.id;
-
-          if (dragState?.isDragging) {
-            if (isThisDragged) {
-              translateX = dragState.deltaX;
-            } else {
-              const draggedWidth =
-                dragState.snapshots[dragState.startIdx]?.width ?? 120;
-              const shift = draggedWidth + dragState.gap;
-              if (
-                dragState.startIdx < dragState.targetIdx &&
-                index > dragState.startIdx &&
-                index <= dragState.targetIdx
-              ) {
-                translateX = -shift;
-              } else if (
-                dragState.startIdx > dragState.targetIdx &&
-                index < dragState.startIdx &&
-                index >= dragState.targetIdx
-              ) {
-                translateX = shift;
-              }
-            }
-          }
-
-          return (
-            <div
-              key={tab.id}
-              ref={(el) => {
-                if (el) {
-                  tabElementsRef.current.set(tab.id, el);
-                } else {
-                  tabElementsRef.current.delete(tab.id);
-                }
-              }}
-              onPointerDown={(e) => startTabPointerDown(e, tab.id, index)}
-              style={{
-                transform:
-                  translateX !== 0
-                    ? `translate3d(${translateX}px, 0, 0)`
-                    : undefined,
-                transition:
-                  isThisDragged && !dragState?.isReturning
-                    ? 'none'
-                    : dragState?.isDragging
-                    ? 'transform 150ms cubic-bezier(0.16, 1, 0.3, 1)'
-                    : undefined,
-              }}
-              className={`app-no-drag group relative flex items-center gap-1.5 h-[36px] pl-2 pr-3 rounded-t-md border-t border-x shrink-0 ${
-                isThisDragged
-                  ? 'z-30 shadow-md cursor-grabbing bg-[var(--surface-elevated)] border-[var(--accent)] text-slate-900 dark:text-slate-100'
-                  : isActive
-                  ? 'z-10 cursor-grab bg-[var(--surface-panel)] border-[var(--surface-border)] text-slate-900 dark:text-slate-100 transition-colors'
-                  : 'cursor-grab bg-transparent border-transparent text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-200 transition-colors'
-              }`}
-            >
-              <GripVertical className="w-3 h-3 text-slate-400/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -mr-0.5 pointer-events-none" />
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (suppressClickRef.current) return;
-                  onSelectTab(tab.id);
-                }}
-                onDoubleClick={() => {
-                  setEditingTabId(tab.id);
-                  setEditingName(tab.name);
-                }}
-                className={`text-[13px] font-medium whitespace-nowrap shrink-0 focus-visible:outline-none ${
-                  isThisDragged ? 'cursor-grabbing' : 'cursor-grab'
-                }`}
-                title={`${tab.name} (drag to reorder, double-click to rename)`}
-              >
-                {tab.name}
-              </button>
-
-              {/* Inline edit/close actions */}
-              <div
-                data-no-drag="true"
-                className={`flex items-center gap-0.5 transition-opacity ${
-                  isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-80'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  onDoubleClick={() => {
                     setEditingTabId(tab.id);
                     setEditingName(tab.name);
                   }}
-                  aria-label={`Rename ${tab.name}`}
-                  title="Rename tab"
-                  className="p-0.5 rounded hover:bg-slate-200/80 dark:hover:bg-white/10 text-slate-500 dark:text-slate-400"
+                  className={`text-[13px] font-medium truncate focus-visible:outline-none ${
+                    isThisDragged ? 'cursor-grabbing' : 'cursor-grab'
+                  }`}
+                  title={`${tab.name} (drag to reorder, double-click to rename)`}
                 >
-                  <Pencil className="w-3 h-3" />
+                  {tab.name}
                 </button>
-                {tabs.length > 1 && (
+
+                {/* Inline edit/delete actions */}
+                <div
+                  data-no-drag="true"
+                  className={`app-no-drag flex items-center gap-0.5 shrink-0 transition-opacity ${
+                    isActive
+                      ? 'opacity-75 hover:opacity-100'
+                      : 'opacity-0 group-hover:opacity-85'
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setConfirmDeleteTabId(tab.id);
+                      setEditingTabId(tab.id);
+                      setEditingName(tab.name);
                     }}
-                    aria-label={`Delete ${tab.name}`}
-                    title="Delete tab"
-                    className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/40 text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400"
+                    aria-label={`Rename ${tab.name}`}
+                    title="Rename tab"
+                    className="app-no-drag p-0.5 rounded hover:bg-slate-200/80 dark:hover:bg-white/10 text-slate-500 dark:text-slate-400"
                   >
-                    <X className="w-3 h-3" />
+                    <Pencil className="w-3 h-3" />
                   </button>
+                  {tabs.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDeleteTabId(tab.id);
+                      }}
+                      aria-label={`Delete ${tab.name}`}
+                      title="Delete tab"
+                      className="app-no-drag p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/40 text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Fluent active bottom accent indicator */}
+                {isActive && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-[var(--accent)]"
+                  />
                 )}
               </div>
+            );
+          })}
+        </nav>
 
-              {/* Fluent active bottom accent indicator */}
-              {isActive && (
-                <span
-                  aria-hidden="true"
-                  className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-[var(--accent)]"
-                />
-              )}
-            </div>
-          );
-        })}
+        {canScrollRight && (
+          <button
+            type="button"
+            onClick={() => scrollTabsBy(160)}
+            aria-label="Scroll tabs right"
+            title="Scroll tabs right"
+            className="app-no-drag flex items-center justify-center w-6 h-[32px] mb-1 rounded-md text-slate-500 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 shrink-0 transition-colors"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        )}
 
+        {/* Pinned New Tab Control (always clickable & never clipped by overflow) */}
         {isAddingTab ? (
           <form
             onSubmit={handleAddSubmit}
-            className="flex items-center gap-1 h-[34px] px-2 mb-[1px] bg-[var(--surface-panel)] border border-[var(--accent)] rounded-md shrink-0"
+            className="app-no-drag flex items-center gap-1 h-[34px] px-2 mb-1 bg-[var(--surface-panel)] border border-[var(--accent)] rounded-md shrink-0"
           >
             <input
               ref={addInputRef}
               type="text"
-              placeholder="Project tab name..."
+              placeholder="Tab name..."
               value={newTabName}
               onChange={(e) => setNewTabName(e.target.value)}
               onKeyDown={(e) => {
@@ -521,12 +605,13 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
                 }
               }}
               maxLength={32}
-              className="w-32 bg-transparent text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
+              className="app-no-drag w-24 sm:w-28 bg-transparent text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
             />
             <button
               type="submit"
               aria-label="Confirm new tab"
-              className="p-0.5 text-[var(--accent)] hover:bg-[var(--surface-hover)] rounded"
+              title="Create tab"
+              className="app-no-drag p-0.5 text-[var(--accent)] hover:bg-[var(--surface-hover)] rounded"
             >
               <Check className="w-3.5 h-3.5" />
             </button>
@@ -537,7 +622,8 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
                 setNewTabName('');
               }}
               aria-label="Cancel new tab"
-              className="p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded"
+              title="Cancel"
+              className="app-no-drag p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -546,26 +632,26 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           <button
             type="button"
             onClick={() => setIsAddingTab(true)}
-            className="app-no-drag flex items-center gap-1 h-[32px] px-2.5 mb-1 rounded-md text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="app-no-drag flex items-center gap-1 h-[32px] px-2 mb-1 rounded-md text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             title="Add project tab"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>New Tab</span>
+            <span className="hidden md:inline">New Tab</span>
           </button>
         )}
-      </nav>
+      </div>
 
-      {/* Zone 3: Streamlined utility controls */}
-      <div className="app-no-drag flex items-center gap-1.5 shrink-0">
+      {/* Zone 3: Streamlined utility controls (compact on narrow/half-screen windows) */}
+      <div className="app-no-drag flex items-center gap-1 shrink-0">
         <button
           type="button"
           onClick={onOpenCommandPalette}
-          className="flex items-center gap-2 h-8 px-2.5 rounded-md bg-[var(--surface-panel)] border border-[var(--surface-border)] text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-[var(--surface-border-strong)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          title="Open quick command palette (Ctrl+K)"
+          className="app-no-drag flex items-center gap-1.5 h-8 px-2 xl:px-2.5 rounded-md bg-[var(--surface-panel)] border border-[var(--surface-border)] text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-[var(--surface-border-strong)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          title="Quick Jump across all tabs (Ctrl+K)"
         >
           <Search className="w-3.5 h-3.5 text-slate-400" />
-          <span className="hidden sm:inline">Quick Jump</span>
-          <kbd className="hidden md:inline-block font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--surface-subtle)] text-slate-500 dark:text-slate-400 border border-[var(--surface-border)]">
+          <span className="hidden xl:inline">Quick Jump</span>
+          <kbd className="hidden xl:inline-block font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--surface-subtle)] text-slate-500 dark:text-slate-400 border border-[var(--surface-border)]">
             Ctrl K
           </kbd>
         </button>
@@ -573,11 +659,11 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         <button
           type="button"
           onClick={onOpenBackupModal}
-          className="flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="app-no-drag flex items-center gap-1.5 h-8 px-2 xl:px-2.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           title="Export or import JSON workspace backup"
         >
           <DatabaseBackup className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Backup</span>
+          <span className="hidden xl:inline">Backup</span>
         </button>
 
         <button
@@ -585,7 +671,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           onClick={onOpenGuide}
           aria-label="Open user guide"
           title="User Guide & Shortcuts"
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-[var(--accent)] transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="app-no-drag flex items-center justify-center w-8 h-8 rounded-md text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-[var(--accent)] transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <HelpCircle className="w-4 h-4" />
         </button>
@@ -604,7 +690,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
                 ? 'Settings (Update available)'
                 : 'Settings'
             }
-            className={`relative flex items-center justify-center w-8 h-8 rounded-md transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
+            className={`app-no-drag relative flex items-center justify-center w-8 h-8 rounded-md transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
               isThemeSettingsOpen
                 ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-[var(--accent)]'

@@ -350,3 +350,13 @@
 .app-no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* Hide scrollbars cleanly while preserving wheel/button scrolling */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

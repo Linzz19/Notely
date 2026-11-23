@@ -668,6 +668,191 @@ export default function App() {
     [selectedTemplateId, pushToast]
   );
 
+  // Single or multi-template bulk actions (from right-click context menu or bulk bar)
+  const handleAssignTemplatesCategory = useCallback(
+    (templateIds: string[], categoryId: string) => {
+      if (templateIds.length === 0) return;
+      const idSet = new Set(templateIds);
+      const now = new Date().toISOString();
+      const targetCatName = categoryId
+        ? workspace.categories.find((c) => c.id === categoryId)?.name || 'Category'
+        : 'Unassigned';
+
+      setWorkspace((prev) => ({
+        ...prev,
+        templates: prev.templates.map((t) =>
+          idSet.has(t.id) ? { ...t, categoryId, updatedAt: now } : t
+        ),
+      }));
+      pushToast(
+        templateIds.length === 1
+          ? `Assigned to ${targetCatName}`
+          : `Assigned ${templateIds.length} templates to ${targetCatName}`,
+        'success'
+      );
+    },
+    [workspace.categories, pushToast]
+  );
+
+  const handleCreateCategoryAndAssign = useCallback(
+    (templateIds: string[], categoryName: string) => {
+      const trimmed = categoryName.trim();
+      if (!trimmed || templateIds.length === 0) return;
+      const newCatId = handleCreateCategory(trimmed);
+      if (!newCatId) return;
+      const idSet = new Set(templateIds);
+      const now = new Date().toISOString();
+
+      setWorkspace((prev) => ({
+        ...prev,
+        templates: prev.templates.map((t) =>
+          idSet.has(t.id) ? { ...t, categoryId: newCatId, updatedAt: now } : t
+        ),
+      }));
+      pushToast(
+        templateIds.length === 1
+          ? `Created "${trimmed}" and assigned template`
+          : `Created "${trimmed}" and assigned ${templateIds.length} templates`,
+        'success'
+      );
+    },
+    [handleCreateCategory, pushToast]
+  );
+
+  const handleMoveTemplatesToTab = useCallback(
+    (templateIds: string[], targetTabId: string) => {
+      if (templateIds.length === 0) return;
+      const idSet = new Set(templateIds);
+      const now = new Date().toISOString();
+      const targetTab = workspace.tabs.find((t) => t.id === targetTabId);
+      if (!targetTab) return;
+      const targetFirstCatId =
+        workspace.categories
+          .filter((c) => c.tabId === targetTabId)
+          .sort((a, b) => a.order - b.order)[0]?.id ?? '';
+
+      setWorkspace((prev) => ({
+        ...prev,
+        templates: prev.templates.map((t) =>
+          idSet.has(t.id)
+            ? {
+                ...t,
+                tabId: targetTabId,
+                categoryId: targetFirstCatId,
+                updatedAt: now,
+              }
+            : t
+        ),
+      }));
+
+      if (selectedTemplateId && idSet.has(selectedTemplateId)) {
+        setSelectedTemplateId(null);
+      }
+
+      pushToast(
+        templateIds.length === 1
+          ? `Moved template to "${targetTab.name}"`
+          : `Moved ${templateIds.length} templates to "${targetTab.name}"`,
+        'success'
+      );
+    },
+    [workspace.tabs, workspace.categories, selectedTemplateId, pushToast]
+  );
+
+  const handleAddTagToTemplates = useCallback(
+    (templateIds: string[], rawTag: string) => {
+      const tag = rawTag.trim().replace(/^#+/, '').toLowerCase();
+      if (!tag || templateIds.length === 0) return;
+      const idSet = new Set(templateIds);
+      const now = new Date().toISOString();
+
+      setWorkspace((prev) => ({
+        ...prev,
+        templates: prev.templates.map((t) => {
+          if (!idSet.has(t.id)) return t;
+          const exists = t.tags.some((existing) => existing.toLowerCase() === tag);
+          if (exists) return t;
+          return { ...t, tags: [...t.tags, tag], updatedAt: now };
+        }),
+      }));
+      pushToast(
+        templateIds.length === 1
+          ? `Added #${tag} tag`
+          : `Added #${tag} to ${templateIds.length} templates`,
+        'success'
+      );
+    },
+    [pushToast]
+  );
+
+  const handleDuplicateTemplates = useCallback(
+    (templateIds: string[]) => {
+      if (templateIds.length === 0) return;
+      const idSet = new Set(templateIds);
+      const now = new Date().toISOString();
+      const singleCopyId = templateIds.length === 1 ? createId('tpl') : null;
+
+      setWorkspace((prev) => {
+        const copies: SnippetTemplate[] = prev.templates
+          .filter((t) => idSet.has(t.id))
+          .map((t, index) => ({
+            ...t,
+            id: singleCopyId && index === 0 ? singleCopyId : createId('tpl'),
+            title: `${t.title} (Copy)`,
+            usageCount: 0,
+            createdAt: now,
+            updatedAt: now,
+            lastCopiedAt: null,
+            history: [],
+          }));
+        return {
+          ...prev,
+          templates: [...copies, ...prev.templates],
+        };
+      });
+
+      if (singleCopyId) {
+        setSelectedTemplateId(singleCopyId);
+      }
+      pushToast(
+        templateIds.length === 1
+          ? 'Template duplicated'
+          : `Duplicated ${templateIds.length} templates`,
+        'info'
+      );
+    },
+    [pushToast]
+  );
+
+  const handleDeleteTemplates = useCallback(
+    (templateIds: string[]) => {
+      if (templateIds.length === 0) return;
+      const idSet = new Set(templateIds);
+      setWorkspace((prev) => ({
+        ...prev,
+        templates: prev.templates.filter((t) => !idSet.has(t.id)),
+      }));
+      if (selectedTemplateId && idSet.has(selectedTemplateId)) {
+        setSelectedTemplateId(null);
+        setMobilePane('list');
+      }
+      pushToast(
+        templateIds.length === 1
+          ? 'Template deleted'
+          : `Deleted ${templateIds.length} templates`,
+        'info'
+      );
+    },
+    [selectedTemplateId, pushToast]
+  );
+
+  const handleEditTemplateFromMenu = useCallback((templateId: string) => {
+    editBurstRef.current = null;
+    setSelectedTemplateId(templateId);
+    setInspectorMode('edit');
+    setMobilePane('inspector');
+  }, []);
+
   // Backup handlers
   const handleImportReplace = useCallback(
     (parsed: ParsedBackupResult) => {
@@ -912,6 +1097,8 @@ export default function App() {
           <TemplateListPane
             templates={filteredTemplates}
             categories={categoriesInTab}
+            tabs={workspace.tabs}
+            activeTabId={activeTab?.id ?? ''}
             selectedTemplateId={selectedTemplate?.id ?? null}
             copiedTemplateId={copiedRowId}
             searchQuery={searchQuery}
@@ -936,7 +1123,15 @@ export default function App() {
               setMobilePane('inspector');
             }}
             onQuickCopyTemplate={(tpl) => handleRequestCopy(tpl, 'rich')}
+            onCopyTemplateWithFormat={handleRequestCopy}
+            onEditTemplate={handleEditTemplateFromMenu}
             onCreateTemplate={handleCreateTemplate}
+            onAssignTemplatesCategory={handleAssignTemplatesCategory}
+            onCreateCategoryAndAssign={handleCreateCategoryAndAssign}
+            onMoveTemplatesToTab={handleMoveTemplatesToTab}
+            onAddTagToTemplates={handleAddTagToTemplates}
+            onDuplicateTemplates={handleDuplicateTemplates}
+            onDeleteTemplates={handleDeleteTemplates}
           />
         </div>
 

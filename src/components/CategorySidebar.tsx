@@ -89,6 +89,17 @@ export const CategorySidebar: React.FC<CategorySidebarProps> = ({
     }
   }, [editingCatId]);
 
+  useEffect(() => {
+    if (!isMobileOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCloseMobile();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMobileOpen, onCloseMobile]);
+
   const sortedCategories = [...categories].sort((a, b) => a.order - b.order);
   const sortedCategoriesRef = useRef(sortedCategories);
   sortedCategoriesRef.current = sortedCategories;
@@ -294,7 +305,8 @@ export const CategorySidebar: React.FC<CategorySidebarProps> = ({
           type="button"
           onClick={onCloseMobile}
           aria-label="Close navigation"
-          className="lg:hidden p-1 rounded text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+          title="Close categories panel (Esc)"
+          className="app-no-drag lg:hidden p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-white transition-colors"
         >
           <X className="w-4 h-4" />
         </button>
@@ -648,15 +660,17 @@ export const CategorySidebar: React.FC<CategorySidebarProps> = ({
       {/* Desktop rail */}
       <div className="hidden lg:block h-full shrink-0">{sidebarContent}</div>
 
-      {/* Mobile slide-over drawer */}
+      {/* Mobile / narrow-window slide-over drawer (positioned below 52px Electron titlebar) */}
       {isMobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-40 flex">
+        <div className="app-no-drag lg:hidden fixed inset-x-0 top-[52px] bottom-0 z-40 flex">
           <div
-            className="fixed inset-0 bg-black/40"
+            className="app-no-drag fixed inset-x-0 top-[52px] bottom-0 bg-black/40"
             onClick={onCloseMobile}
             aria-hidden="true"
           />
-          <div className="relative z-10 h-full">{sidebarContent}</div>
+          <div className="app-no-drag relative z-10 h-full shadow-2xl">
+            {sidebarContent}
+          </div>
         </div>
       )}
     </>

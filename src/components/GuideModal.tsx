@@ -71,10 +71,10 @@ export const GuideModal: React.FC<GuideModalProps> = ({ onClose }) => {
 
               <div className="p-3.5 rounded-md bg-[var(--surface-subtle)] border border-[var(--surface-border)] space-y-1.5">
                 <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                  Rename, Add &amp; Tag Filtering
+                  Right-Click &amp; Multi-Select Templates
                 </div>
                 <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Double-click a tab (or click its pencil icon) to rename it. Use the left sidebar to add categories or click any <strong>#tag</strong> to isolate matching snippets inside the active tab.
+                  Right-click any template (or use <strong>Select</strong>, <kbd className="font-mono text-[11px] px-1 py-0.5 rounded bg-[var(--surface-frame)] border border-[var(--surface-border)]">Ctrl+Click</kbd>, or <kbd className="font-mono text-[11px] px-1 py-0.5 rounded bg-[var(--surface-frame)] border border-[var(--surface-border)]">Shift+Click</kbd>) to assign multiple templates to a category, move them to another tab, add tags, duplicate, or delete in bulk.
                 </p>
               </div>
             </div>
