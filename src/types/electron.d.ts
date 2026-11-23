@@ -15,6 +15,46 @@ export interface DesktopImportResult {
   content?: string;
 }
 
+export interface DesktopThemePayload {
+  mode: 'light' | 'dark';
+  color: string;
+  symbolColor: string;
+}
+
+export type CloseButtonBehavior = 'tray' | 'exit';
+
+export interface DesktopPreferences {
+  closeBehavior: CloseButtonBehavior;
+  openAtLogin: boolean;
+  canConfigureStartup: boolean;
+  isPortable: boolean;
+}
+
+export interface DesktopPreferencesPatch {
+  closeBehavior?: CloseButtonBehavior;
+  openAtLogin?: boolean;
+}
+
+export type AppUpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+  | 'unsupported';
+
+export interface AppUpdateState {
+  status: AppUpdateStatus;
+  currentVersion: string;
+  availableVersion: string | null;
+  progressPercent: number;
+  errorMessage: string | null;
+  canUpdate: boolean;
+  isPortable: boolean;
+}
+
 export interface FluentDesktopBridge {
   isElectron: boolean;
   platform: string;
@@ -24,7 +64,16 @@ export interface FluentDesktopBridge {
   getWorkspacePath: () => Promise<string>;
   openDataFolder: () => Promise<string>;
   writeClipboard: (payload: DesktopClipboardPayload) => Promise<boolean>;
-  syncTheme: (theme: 'light' | 'dark') => Promise<void>;
+  syncTheme: (theme: 'light' | 'dark' | DesktopThemePayload) => Promise<void>;
+  getDesktopPreferences: () => Promise<DesktopPreferences>;
+  setDesktopPreferences: (
+    patch: DesktopPreferencesPatch
+  ) => Promise<DesktopPreferences>;
+  getUpdateState: () => Promise<AppUpdateState>;
+  checkForUpdates: () => Promise<AppUpdateState>;
+  downloadUpdate: () => Promise<AppUpdateState>;
+  installUpdate: () => Promise<boolean>;
+  onUpdateStatus: (callback: (state: AppUpdateState) => void) => () => void;
   exportBackupDialog: (
     defaultFilename: string,
     jsonString: string

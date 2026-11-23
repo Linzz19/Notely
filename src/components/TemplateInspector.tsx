@@ -97,7 +97,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
 
   if (!template) {
     return (
-      <main className="flex-1 min-w-0 h-full hidden md:flex flex-col items-center justify-center p-8 bg-[#F9FAFB] dark:bg-[#19191C] text-center">
+      <main className="flex-1 min-w-0 h-full hidden md:flex flex-col items-center justify-center p-8 bg-[var(--surface-subtle)] text-center">
         <div className="max-w-sm space-y-3">
           <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-100">
             Select a template to preview or edit
@@ -105,20 +105,20 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
           <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
             Choose any snippet from the list, create a new template in{' '}
             <span className="font-medium text-slate-700 dark:text-slate-200">{tabName}</span>,
-            or press <kbd className="font-mono text-xs px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-[#2C2C30]">Ctrl+K</kbd> to jump anywhere.
+            or press <kbd className="font-mono text-xs px-1.5 py-0.5 rounded bg-[var(--surface-frame)] border border-[var(--surface-border)]">Ctrl+K</kbd> to jump anywhere.
           </p>
           <div className="pt-2 flex items-center justify-center gap-2.5">
             <button
               type="button"
               onClick={onCreateTemplate}
-              className="px-4 py-2 rounded-md bg-[#0067C0] dark:bg-[#4CC2FF] text-white dark:text-[#0F172A] text-xs font-semibold hover:opacity-95 transition-opacity"
+              className="px-4 py-2 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors"
             >
               Create Template
             </button>
             <button
               type="button"
               onClick={onOpenCommandPalette}
-              className="px-4 py-2 rounded-md border border-slate-200 dark:border-[#34343A] bg-white dark:bg-[#202023] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors"
+              className="px-4 py-2 rounded-md border border-[var(--surface-border)] bg-[var(--surface-panel)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)] transition-colors"
             >
               Open Command Palette
             </button>
@@ -228,21 +228,21 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
   const showPreview = viewMode === 'preview' || viewMode === 'split';
 
   return (
-    <main className="flex-1 min-w-0 h-full flex flex-col bg-white dark:bg-[#202023]">
+    <main className="flex-1 min-w-0 h-full flex flex-col bg-[var(--surface-panel)]">
       {/* Top Action Toolbar */}
-      <div className="px-4 py-2.5 border-b border-slate-200 dark:border-[#2E2E32] flex flex-wrap items-center justify-between gap-3 bg-[#F8FAFC]/70 dark:bg-[#1B1B1E]/70">
+      <div className="px-4 py-2.5 border-b border-[var(--surface-border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--surface-sidebar)]">
         <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             onClick={onBackToListMobile}
             aria-label="Back to template list"
-            className="md:hidden p-1.5 -ml-1 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-white/10"
+            className="md:hidden p-1.5 -ml-1 rounded-md text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)]"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
 
           {/* Segmented Mode Control */}
-          <div className="flex items-center p-0.5 rounded-md bg-slate-200/70 dark:bg-[#2A2A2F]">
+          <div className="flex items-center p-0.5 rounded-md bg-[var(--surface-frame)] border border-[var(--surface-border)]">
             {(['preview', 'split', 'edit'] as InspectorViewMode[]).map((mode) => (
               <button
                 key={mode}
@@ -253,7 +253,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                 }}
                 className={`px-2.5 py-1 text-xs font-medium rounded capitalize transition-colors whitespace-nowrap ${
                   viewMode === mode
-                    ? 'bg-white dark:bg-[#38383F] text-slate-900 dark:text-white shadow-xs'
+                    ? 'bg-[var(--surface-elevated)] text-slate-900 dark:text-white shadow-xs'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                 } ${mode === 'split' ? 'hidden xl:inline-flex' : ''}`}
               >
@@ -275,7 +275,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             className={`flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
               copiedFormat === 'rich'
                 ? 'bg-emerald-600 text-white'
-                : 'bg-[#0067C0] hover:bg-[#005A9E] dark:bg-[#4CC2FF] dark:hover:bg-[#38B6F8] text-white dark:text-[#0F172A]'
+                : 'bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)]'
             }`}
           >
             {copiedFormat === 'rich' ? (
@@ -300,7 +300,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
               copiedFormat === 'plain'
                 ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-                : 'border-slate-200 dark:border-[#34343A] bg-white dark:bg-[#242428] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5'
+                : 'border-[var(--surface-border)] bg-[var(--surface-elevated)] text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)]'
             }`}
           >
             {copiedFormat === 'plain' ? (
@@ -318,7 +318,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             className={`flex items-center gap-1 h-8 px-2.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
               copiedFormat === 'markdown'
                 ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-                : 'border-slate-200 dark:border-[#34343A] bg-white dark:bg-[#242428] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5'
+                : 'border-[var(--surface-border)] bg-[var(--surface-elevated)] text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)]'
             }`}
           >
             {copiedFormat === 'markdown' ? (
@@ -329,7 +329,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             <span>MD</span>
           </button>
 
-          <div className="h-4 w-px bg-slate-200 dark:bg-[#34343A] mx-0.5" />
+          <div className="h-4 w-px bg-[var(--surface-border)] mx-0.5" />
 
           <button
             type="button"
@@ -339,12 +339,12 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             }}
             title="View & restore last 3 saved content versions"
             aria-label="Template version history"
-            className="flex items-center gap-1 h-8 px-2 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
+            className="flex items-center gap-1 h-8 px-2 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0"
           >
             <History className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">History</span>
             {(template.history?.length ?? 0) > 0 && (
-              <span className="font-mono text-[11px] tabular-nums text-[#0067C0] dark:text-[#4CC2FF]">
+              <span className="font-mono text-[11px] tabular-nums text-[var(--accent)]">
                 {template.history?.length}
               </span>
             )}
@@ -355,7 +355,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             onClick={() => onDuplicateTemplate(template)}
             title="Duplicate template"
             aria-label="Duplicate template"
-            className="h-8 w-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors"
+            className="h-8 w-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] transition-colors"
           >
             <CopyPlus className="w-3.5 h-3.5" />
           </button>
@@ -394,14 +394,14 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
       {/* Main Content Area (Preview, Split, or Edit) */}
       <div
         className={`flex-1 min-h-0 flex ${
-          viewMode === 'split' ? 'divide-x divide-slate-200 dark:divide-[#2E2E32]' : ''
+          viewMode === 'split' ? 'divide-x divide-[var(--surface-border)]' : ''
         }`}
       >
         {/* Editor Column */}
         {showEditor && (
           <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
             {/* Title, Category & Tag Metadata Inputs */}
-            <div className="p-4 border-b border-slate-200 dark:border-[#2E2E32] space-y-3">
+            <div className="p-4 border-b border-[var(--surface-border)] space-y-3">
               <input
                 type="text"
                 value={template.title}
@@ -433,12 +433,12 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                         value={inlineCatName}
                         onChange={(e) => setInlineCatName(e.target.value)}
                         placeholder="New category..."
-                        className="w-32 h-7 px-2 text-xs bg-white dark:bg-[#18181B] border border-[#0067C0] dark:border-[#4CC2FF] rounded text-slate-900 dark:text-slate-100 focus:outline-none"
+                        className="w-32 h-7 px-2 text-xs bg-[var(--surface-input)] border border-[var(--accent)] rounded text-slate-900 dark:text-slate-100 focus:outline-none"
                       />
                       <button
                         type="submit"
                         aria-label="Confirm category"
-                        className="p-1 text-[#0067C0] dark:text-[#4CC2FF]"
+                        className="p-1 text-[var(--accent)]"
                       >
                         <Check className="w-3.5 h-3.5" />
                       </button>
@@ -461,7 +461,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                             categoryId: e.target.value,
                           })
                         }
-                        className="h-7 px-2 text-xs font-medium bg-[#F8FAFC] dark:bg-[#18181B] border border-slate-200 dark:border-[#2E2E32] rounded text-slate-800 dark:text-slate-200 focus:outline-none focus:border-[#0067C0] dark:focus:border-[#4CC2FF]"
+                        className="h-7 px-2 text-xs font-medium bg-[var(--surface-input)] border border-[var(--surface-border)] rounded text-slate-800 dark:text-slate-200 focus:outline-none focus:border-[var(--accent)]"
                       >
                         <option value="">Unassigned</option>
                         {categories.map((cat) => (
@@ -474,7 +474,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                         type="button"
                         onClick={() => setIsAddingInlineCat(true)}
                         title="Create new category"
-                        className="h-7 px-1.5 rounded border border-slate-200 dark:border-[#2E2E32] text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5"
+                        className="h-7 px-1.5 rounded border border-[var(--surface-border)] text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-[var(--surface-hover)]"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -530,7 +530,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             </div>
 
             {/* Formatting Toolbar */}
-            <div className="px-3 py-1.5 border-b border-slate-200 dark:border-[#2E2E32] bg-[#F8FAFC] dark:bg-[#1B1B1E] flex items-center flex-wrap gap-1">
+            <div className="px-3 py-1.5 border-b border-[var(--surface-border)] bg-[var(--surface-sidebar)] flex items-center flex-wrap gap-1">
               <ToolbarButton
                 icon={<Heading2 className="w-3.5 h-3.5" />}
                 label="Heading 2"
@@ -541,7 +541,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                 label="Heading 3"
                 onClick={() => insertLinePrefix('### ')}
               />
-              <div className="h-4 w-px bg-slate-200 dark:bg-[#34343A] mx-0.5" />
+              <div className="h-4 w-px bg-[var(--surface-border)] mx-0.5" />
               <ToolbarButton
                 icon={<Bold className="w-3.5 h-3.5" />}
                 label="Bold"
@@ -559,7 +559,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                   insertFormatting('[', '](https://example.com)', 'link label')
                 }
               />
-              <div className="h-4 w-px bg-slate-200 dark:bg-[#34343A] mx-0.5" />
+              <div className="h-4 w-px bg-[var(--surface-border)] mx-0.5" />
               <ToolbarButton
                 icon={<List className="w-3.5 h-3.5" />}
                 label="Bullet list"
@@ -580,13 +580,13 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                 label="Inline code"
                 onClick={() => insertFormatting('`', '`', 'code')}
               />
-              <div className="h-4 w-px bg-slate-200 dark:bg-[#34343A] mx-0.5" />
+              <div className="h-4 w-px bg-[var(--surface-border)] mx-0.5" />
               <button
                 type="button"
                 onClick={() =>
                   insertFormatting('{{', '}}', 'variable_name')
                 }
-                className="flex items-center gap-1 h-7 px-2 rounded text-xs font-medium text-[#0067C0] dark:text-[#4CC2FF] hover:bg-[#0067C0]/10 dark:hover:bg-[#4CC2FF]/15 transition-colors whitespace-nowrap"
+                className="flex items-center gap-1 h-7 px-2 rounded text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-soft)] transition-colors whitespace-nowrap"
                 title="Insert dynamic variable placeholder"
               >
                 <Braces className="w-3.5 h-3.5" />
@@ -611,9 +611,9 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                 }}
                 placeholder="Write your email, chat, or documentation template in Markdown... Use {{customer_name}} or {{company|Acme}} for quick-fill variables."
                 aria-label="Template content editor"
-                className="flex-1 w-full p-4 resize-none bg-white dark:bg-[#202023] text-sm leading-relaxed text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none font-sans"
+                className="flex-1 w-full p-4 resize-none bg-[var(--surface-panel)] text-sm leading-relaxed text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none font-sans"
               />
-              <div className="px-4 py-2 border-t border-slate-100 dark:border-[#2A2A2E] text-[11px] text-slate-400 dark:text-slate-500 flex items-center justify-between">
+              <div className="px-4 py-2 border-t border-[var(--surface-border)] text-[11px] text-slate-400 dark:text-slate-500 flex items-center justify-between">
                 <span>
                   Supports Markdown formatting &amp;{' '}
                   <code className="font-mono text-slate-600 dark:text-slate-300">
@@ -631,11 +631,11 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
 
         {/* Formatted Preview Column */}
         {showPreview && (
-          <div className="flex-1 min-w-0 h-full overflow-y-auto p-5 sm:p-7 bg-white dark:bg-[#202023]">
+          <div className="flex-1 min-w-0 h-full overflow-y-auto p-5 sm:p-7 bg-[var(--surface-panel)]">
             <div className="max-w-3xl space-y-5">
               {/* Preview Header (only when not showing editor header in split mode) */}
               {viewMode === 'preview' && (
-                <header className="pb-4 border-b border-slate-200/80 dark:border-[#2E2E32] space-y-2">
+                <header className="pb-4 border-b border-[var(--surface-border)] space-y-2">
                   <h1 className="font-display text-xl sm:text-2xl font-semibold text-slate-900 dark:text-slate-100 text-balance">
                     {template.title || 'Untitled Template'}
                   </h1>
@@ -661,7 +661,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
 
               {/* Detected Dynamic Variables Banner (clean hairline container, no thick left border) */}
               {detectedVariables.length > 0 && (
-                <div className="px-3.5 py-2.5 rounded-md bg-[#F8FAFC] dark:bg-[#19191C] border border-slate-200 dark:border-[#2E2E32] flex flex-wrap items-center justify-between gap-2">
+                <div className="px-3.5 py-2.5 rounded-md bg-[var(--surface-subtle)] border border-[var(--surface-border)] flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs">
                     <span className="font-medium text-slate-600 dark:text-slate-300">
                       Dynamic variables:
@@ -669,7 +669,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                     {detectedVariables.map((v) => (
                       <code
                         key={v.name}
-                        className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[#0067C0]/10 dark:bg-[#4CC2FF]/15 text-[#0067C0] dark:text-[#4CC2FF]"
+                        className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent)]"
                       >
                         {v.defaultValue ? `{{${v.name}|${v.defaultValue}}}` : `{{${v.name}}}`}
                       </code>
@@ -678,7 +678,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                   <button
                     type="button"
                     onClick={() => onCopyTemplate(template, 'rich')}
-                    className="text-xs font-semibold text-[#0067C0] dark:text-[#4CC2FF] hover:underline whitespace-nowrap"
+                    className="text-xs font-semibold text-[var(--accent)] hover:underline whitespace-nowrap"
                   >
                     Fill &amp; Copy →
                   </button>

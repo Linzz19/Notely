@@ -21,13 +21,13 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className="pointer-events-auto flex items-start gap-2.5 px-3.5 py-2.5 rounded-md bg-white dark:bg-[#26262A] border border-slate-200 dark:border-[#38383F] shadow-lg text-xs"
+          className="pointer-events-auto flex items-start gap-2.5 px-3.5 py-2.5 rounded-md bg-[var(--surface-elevated)] border border-[var(--surface-border)] shadow-lg text-xs"
         >
           {toast.variant === 'success' && (
             <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
           )}
           {toast.variant === 'info' && (
-            <Info className="w-4 h-4 text-[#0067C0] dark:text-[#4CC2FF] shrink-0 mt-0.5" />
+            <Info className="w-4 h-4 text-[var(--accent)] shrink-0 mt-0.5" />
           )}
           {(toast.variant === 'warning' || toast.variant === 'error') && (
             <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />

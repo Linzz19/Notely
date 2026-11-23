@@ -2,9 +2,12 @@ import { createStarterWorkspace } from '../data/starterWorkspace';
 import {
   SnippetTemplate,
   TemplateCategory,
+  ThemeMode,
+  ThemePreset,
   WorkspaceData,
   WorkspaceTab,
 } from '../types/workspace';
+import { normalizeAccentColor, normalizeThemePreset } from './theme';
 
 const STORAGE_KEY = 'notely_workspace_v1';
 const LEGACY_STORAGE_KEY = 'fluentsnip_workspace_v1';
@@ -38,6 +41,8 @@ export function parseWorkspaceString(raw: string | null): WorkspaceData | null {
       activeTag: parsed.activeTag ?? null,
       sortBy: parsed.sortBy || 'updated',
       theme: parsed.theme === 'dark' ? 'dark' : 'light',
+      themePreset: normalizeThemePreset(parsed.themePreset),
+      accentColor: normalizeAccentColor(parsed.accentColor),
     };
   } catch {
     return null;
@@ -84,6 +89,9 @@ export interface BackupPayload {
   tabs: WorkspaceTab[];
   categories: TemplateCategory[];
   templates: SnippetTemplate[];
+  theme?: ThemeMode;
+  themePreset?: ThemePreset;
+  accentColor?: string;
 }
 
 export function buildBackupPayload(data: WorkspaceData): BackupPayload {
@@ -94,6 +102,9 @@ export function buildBackupPayload(data: WorkspaceData): BackupPayload {
     tabs: data.tabs,
     categories: data.categories,
     templates: data.templates,
+    theme: data.theme,
+    themePreset: data.themePreset,
+    accentColor: data.accentColor,
   };
 }
 
@@ -126,6 +137,9 @@ export interface ParsedBackupResult {
   tabs: WorkspaceTab[];
   categories: TemplateCategory[];
   templates: SnippetTemplate[];
+  theme?: ThemeMode;
+  themePreset?: ThemePreset;
+  accentColor?: string;
 }
 
 export function parseBackupJson(rawText: string): ParsedBackupResult {
@@ -228,5 +242,16 @@ export function parseBackupJson(rawText: string): ParsedBackupResult {
       };
     });
 
-  return { tabs, categories, templates };
+  const theme: ThemeMode | undefined =
+    obj.theme === 'dark' || obj.theme === 'light' ? obj.theme : undefined;
+  const themePreset: ThemePreset | undefined =
+    typeof obj.themePreset === 'string'
+      ? normalizeThemePreset(obj.themePreset)
+      : undefined;
+  const accentColor: string | undefined =
+    typeof obj.accentColor === 'string'
+      ? normalizeAccentColor(obj.accentColor)
+      : undefined;
+
+  return { tabs, categories, templates, theme, themePreset, accentColor };
 }

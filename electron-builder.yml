@@ -6,11 +6,32 @@ directories:
   output: release
 npmRebuild: false
 buildDependenciesFromSource: false
+publish:
+  - provider: github
+    releaseType: release
 files:
   - dist/**/*
   - electron/**/*
   - package.json
-  - '!node_modules/**/*'
+  - '!node_modules/@google/**/*'
+  - '!node_modules/@tailwindcss/**/*'
+  - '!node_modules/@vitejs/**/*'
+  - '!node_modules/vite/**/*'
+  - '!node_modules/rollup/**/*'
+  - '!node_modules/@rollup/**/*'
+  - '!node_modules/esbuild/**/*'
+  - '!node_modules/@esbuild/**/*'
+  - '!node_modules/lightningcss*/**/*'
+  - '!node_modules/tailwindcss/**/*'
+  - '!node_modules/react/**/*'
+  - '!node_modules/react-dom/**/*'
+  - '!node_modules/motion/**/*'
+  - '!node_modules/framer-motion/**/*'
+  - '!node_modules/lucide-react/**/*'
+  - '!node_modules/express/**/*'
+  - '!node_modules/dotenv/**/*'
+  - '!node_modules/**/*.map'
+  - '!node_modules/**/*.d.ts'
 extraResources:
   - from: electron/icon.png
     to: electron/icon.png
@@ -18,10 +39,10 @@ win:
   icon: electron/icon.ico
   signAndEditExecutable: false
   target:
-    - target: portable
+    - target: nsis
       arch:
         - x64
-    - target: nsis
+    - target: portable
       arch:
         - x64
 portable:

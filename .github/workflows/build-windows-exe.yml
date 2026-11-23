@@ -1,4 +1,4 @@
-name: Build Windows Desktop App (.exe)
+name: Build & Release Windows Desktop App (.exe)
 
 on:
   workflow_dispatch:
@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - master
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -25,31 +28,50 @@ jobs:
         with:
           node-version: 22
 
+      - name: Compute release version & repository metadata
+        shell: pwsh
+        run: |
+          @'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const [major = '1', minor = '0'] = String(pkg.version || '1.0.0').split('.');
+          const runNumber = process.env.GITHUB_RUN_NUMBER || '1';
+          const nextVersion = `${major}.${minor}.${runNumber}`;
+          pkg.version = nextVersion;
+          if (process.env.GITHUB_REPOSITORY) {
+            pkg.repository = {
+              type: 'git',
+              url: `https://github.com/${process.env.GITHUB_REPOSITORY}.git`,
+            };
+          }
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+          fs.appendFileSync(process.env.GITHUB_ENV, `APP_VERSION=${nextVersion}\n`);
+          console.log('Release version:', nextVersion, 'Repo:', process.env.GITHUB_REPOSITORY || 'local');
+          '@ | node
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
       - name: Build UI bundle
+        env:
+          VITE_APP_VERSION: ${{ env.APP_VERSION }}
         run: npm run build
 
-      - name: Build Portable Windows .exe
+      - name: Build & Publish Windows Release (NSIS + Portable)
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npx electron-builder --win portable --config electron-builder.yml --publish never
+        run: npx electron-builder --win nsis portable --config electron-builder.yml --publish always
 
-      - name: Build Windows Installer (.exe)
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npx electron-builder --win nsis --config electron-builder.yml --publish never
-        continue-on-error: true
-
-      - name: List generated executables
+      - name: List generated release artifacts
         shell: pwsh
-        run: Get-ChildItem -Path release -Filter *.exe
+        run: Get-ChildItem -Path release | Select-Object Name, Length
 
-      - name: Upload Notely Windows Executables
+      - name: Upload Notely Windows Executables (Backup Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: Notely-Windows-EXE
+          name: Notely-Windows-EXE-v${{ env.APP_VERSION }}
           path: |
             release/*.exe
+            release/latest.yml
           if-no-files-found: error

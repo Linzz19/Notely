@@ -54,10 +54,10 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
   return (
     <section
       aria-label="Templates list"
-      className="w-full md:w-[340px] lg:w-[368px] shrink-0 h-full flex flex-col bg-white dark:bg-[#202023] border-r border-slate-200 dark:border-[#2E2E32]"
+      className="w-full md:w-[340px] lg:w-[368px] shrink-0 h-full flex flex-col bg-[var(--surface-panel)] border-r border-[var(--surface-border)]"
     >
       {/* Search & Primary Action Header */}
-      <div className="p-3 border-b border-slate-200 dark:border-[#2E2E32] space-y-2.5">
+      <div className="p-3 border-b border-[var(--surface-border)] space-y-2.5">
         <div className="flex items-center gap-2">
           <div className="relative flex-1 min-w-0">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -67,7 +67,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Filter by title, text, or #tag..."
               aria-label="Filter templates"
-              className="w-full h-9 pl-8 pr-7 text-[13px] bg-[#F8FAFC] dark:bg-[#18181B] border border-slate-200 dark:border-[#2E2E32] rounded-md text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-[#0067C0] dark:focus:border-[#4CC2FF] transition-colors"
+              className="w-full h-9 pl-8 pr-7 text-[13px] bg-[var(--surface-input)] border border-[var(--surface-border)] rounded-md text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-[var(--accent)] transition-colors"
             />
             {searchQuery && (
               <button
@@ -84,7 +84,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
           <button
             type="button"
             onClick={onCreateTemplate}
-            className="flex items-center gap-1.5 h-9 px-3 rounded-md bg-[#0067C0] hover:bg-[#005A9E] dark:bg-[#4CC2FF] dark:hover:bg-[#38B6F8] text-white dark:text-[#0F172A] text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF]"
+            className="flex items-center gap-1.5 h-9 px-3 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[var(--accent)]"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New</span>
@@ -100,7 +100,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
             {activeTag && (
               <>
                 <span aria-hidden="true">·</span>
-                <span className="text-[#0067C0] dark:text-[#4CC2FF] font-medium truncate">
+                <span className="text-[var(--accent)] font-medium truncate">
                   #{activeTag}
                 </span>
               </>
@@ -117,13 +117,13 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
               onChange={(e) => onSortChange(e.target.value as SortOption)}
               className="bg-transparent text-xs font-medium text-slate-600 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
-              <option value="updated" className="bg-white dark:bg-[#202023]">
+              <option value="updated" className="bg-[var(--surface-panel)]">
                 Recent
               </option>
-              <option value="usage" className="bg-white dark:bg-[#202023]">
+              <option value="usage" className="bg-[var(--surface-panel)]">
                 Most Copied
               </option>
-              <option value="title" className="bg-white dark:bg-[#202023]">
+              <option value="title" className="bg-[var(--surface-panel)]">
                 Title A–Z
               </option>
             </select>
@@ -132,10 +132,10 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
       </div>
 
       {/* Template Rows */}
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-[#2A2A2E]">
+      <div className="flex-1 overflow-y-auto divide-y divide-[var(--surface-border)]">
         {templates.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center p-6 text-center">
-            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-[#28282C] flex items-center justify-center text-slate-400 mb-3">
+            <div className="w-10 h-10 rounded-lg bg-[var(--surface-subtle)] border border-[var(--surface-border)] flex items-center justify-center text-slate-400 mb-3">
               <FileText className="w-5 h-5" />
             </div>
             <p className="font-display text-sm font-semibold text-slate-800 dark:text-slate-200">
@@ -151,7 +151,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
                 <button
                   type="button"
                   onClick={onClearFilters}
-                  className="px-3 py-1.5 rounded-md border border-slate-200 dark:border-[#3A3A3F] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors"
+                  className="px-3 py-1.5 rounded-md border border-[var(--surface-border)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)] transition-colors"
                 >
                   Clear Filters
                 </button>
@@ -159,7 +159,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
               <button
                 type="button"
                 onClick={onCreateTemplate}
-                className="px-3 py-1.5 rounded-md bg-[#0067C0] dark:bg-[#4CC2FF] text-white dark:text-[#0F172A] text-xs font-semibold hover:opacity-95 transition-opacity"
+                className="px-3 py-1.5 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors"
               >
                 Create Template
               </button>
@@ -185,17 +185,17 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
                     onSelectTemplate(tpl.id);
                   }
                 }}
-                className={`group relative px-3.5 py-3 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF] ${
+                className={`group relative px-3.5 py-3 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${
                   isSelected
-                    ? 'bg-[#0067C0]/[0.06] dark:bg-[#4CC2FF]/[0.09]'
-                    : 'hover:bg-slate-50 dark:hover:bg-white/[0.03]'
+                    ? 'bg-[var(--accent-soft)]'
+                    : 'hover:bg-[var(--surface-hover)]'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <h3
                     className={`font-display text-[13.5px] font-semibold leading-snug truncate ${
                       isSelected
-                        ? 'text-[#0067C0] dark:text-[#4CC2FF]'
+                        ? 'text-[var(--accent)]'
                         : 'text-slate-900 dark:text-slate-100'
                     }`}
                   >
@@ -212,7 +212,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
                     className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
                       isCopied
                         ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-100 dark:bg-[#2C2C30] text-slate-700 dark:text-slate-200 hover:bg-[#0067C0] hover:text-white dark:hover:bg-[#4CC2FF] dark:hover:text-[#0F172A]'
+                        : 'bg-[var(--surface-subtle)] border border-[var(--surface-border)] text-slate-700 dark:text-slate-200 hover:bg-[var(--accent)] hover:border-[var(--accent)] hover:text-[var(--accent-fg)]'
                     }`}
                   >
                     {isCopied ? (
@@ -250,7 +250,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
                   {vars.length > 0 && (
                     <>
                       <span aria-hidden="true">·</span>
-                      <span className="font-mono tabular-nums text-[#0067C0] dark:text-[#4CC2FF]">
+                      <span className="font-mono tabular-nums text-[var(--accent)]">
                         {vars.length} {vars.length === 1 ? 'var' : 'vars'}
                       </span>
                     </>

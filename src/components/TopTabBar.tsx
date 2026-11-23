@@ -5,25 +5,42 @@ import {
   GripVertical,
   HelpCircle,
   Menu,
-  Moon,
   Pencil,
   Plus,
   Search,
-  Sun,
+  Settings,
   X,
 } from 'lucide-react';
-import { ThemeMode, WorkspaceTab } from '../types/workspace';
+import {
+  AppUpdateState,
+  DesktopPreferences,
+  DesktopPreferencesPatch,
+} from '../types/electron';
+import { ThemeMode, ThemePreset, WorkspaceTab } from '../types/workspace';
+import { ThemeSettingsPopover } from './ThemeSettingsPopover';
 
 interface TopTabBarProps {
   tabs: WorkspaceTab[];
   activeTabId: string;
   theme: ThemeMode;
+  themePreset: ThemePreset;
+  accentColor: string;
+  isDesktopApp: boolean;
+  desktopPrefs: DesktopPreferences;
+  updateState: AppUpdateState;
   onSelectTab: (tabId: string) => void;
   onCreateTab: (name: string) => void;
   onRenameTab: (tabId: string, newName: string) => void;
   onDeleteTab: (tabId: string) => void;
   onReorderTabs: (orderedTabIds: string[]) => void;
-  onToggleTheme: () => void;
+  onChangeTheme: (theme: ThemeMode) => void;
+  onChangeThemePreset: (preset: ThemePreset) => void;
+  onChangeAccentColor: (accentColor: string) => void;
+  onResetTheme: () => void;
+  onUpdateDesktopPrefs: (patch: DesktopPreferencesPatch) => void;
+  onCheckForUpdates: () => void;
+  onDownloadUpdate: () => void;
+  onInstallUpdate: () => void;
   onOpenCommandPalette: () => void;
   onOpenBackupModal: () => void;
   onOpenGuide: () => void;
@@ -54,12 +71,24 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   tabs,
   activeTabId,
   theme,
+  themePreset,
+  accentColor,
+  isDesktopApp,
+  desktopPrefs,
+  updateState,
   onSelectTab,
   onCreateTab,
   onRenameTab,
   onDeleteTab,
   onReorderTabs,
-  onToggleTheme,
+  onChangeTheme,
+  onChangeThemePreset,
+  onChangeAccentColor,
+  onResetTheme,
+  onUpdateDesktopPrefs,
+  onCheckForUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
   onOpenCommandPalette,
   onOpenBackupModal,
   onOpenGuide,
@@ -71,6 +100,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   const [editingName, setEditingName] = useState('');
   const [confirmDeleteTabId, setConfirmDeleteTabId] = useState<string | null>(null);
   const [dragState, setDragState] = useState<TabDragState | null>(null);
+  const [isThemeSettingsOpen, setIsThemeSettingsOpen] = useState(false);
 
   const addInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -262,7 +292,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
 
   return (
     <header
-      className={`h-[52px] shrink-0 bg-[#F3F4F6] dark:bg-[#161618] border-b border-slate-200 dark:border-[#2E2E32] pl-3 sm:pl-4 flex items-center justify-between gap-4 select-none ${
+      className={`h-[52px] shrink-0 bg-[var(--surface-frame)] border-b border-[var(--surface-border)] pl-3 sm:pl-4 flex items-center justify-between gap-4 select-none ${
         isWindowsDesktop ? 'app-drag-region pr-[144px]' : 'pr-3 sm:pr-4'
       }`}
     >
@@ -272,7 +302,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           type="button"
           onClick={onToggleMobileSidebar}
           aria-label="Toggle categories panel"
-          className="app-no-drag lg:hidden p-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-300 dark:hover:text-white dark:hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF]"
+          className="app-no-drag lg:hidden p-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-300 dark:hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <Menu className="w-4 h-4" />
         </button>
@@ -296,7 +326,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
               <form
                 key={tab.id}
                 onSubmit={handleEditSubmit}
-                className="flex items-center h-[36px] px-2 bg-white dark:bg-[#202023] border border-[#0067C0] dark:border-[#4CC2FF] rounded-t-md shrink-0"
+                className="flex items-center h-[36px] px-2 bg-[var(--surface-panel)] border border-[var(--accent)] rounded-t-md shrink-0"
               >
                 <input
                   ref={editInputRef}
@@ -400,10 +430,10 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
               }}
               className={`app-no-drag group relative flex items-center gap-1.5 h-[36px] pl-2 pr-3 rounded-t-md border-t border-x shrink-0 ${
                 isThisDragged
-                  ? 'z-30 shadow-md cursor-grabbing bg-white dark:bg-[#26262A] border-[#0067C0]/60 dark:border-[#4CC2FF]/60 text-slate-900 dark:text-slate-100'
+                  ? 'z-30 shadow-md cursor-grabbing bg-[var(--surface-elevated)] border-[var(--accent)] text-slate-900 dark:text-slate-100'
                   : isActive
-                  ? 'z-10 cursor-grab bg-white dark:bg-[#202023] border-slate-200 dark:border-[#2E2E32] text-slate-900 dark:text-slate-100 transition-colors'
-                  : 'cursor-grab bg-transparent border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-white/5 transition-colors'
+                  ? 'z-10 cursor-grab bg-[var(--surface-panel)] border-[var(--surface-border)] text-slate-900 dark:text-slate-100 transition-colors'
+                  : 'cursor-grab bg-transparent border-transparent text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-200 transition-colors'
               }`}
             >
               <GripVertical className="w-3 h-3 text-slate-400/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -mr-0.5 pointer-events-none" />
@@ -466,7 +496,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
               {isActive && (
                 <span
                   aria-hidden="true"
-                  className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-[#0067C0] dark:bg-[#4CC2FF]"
+                  className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-[var(--accent)]"
                 />
               )}
             </div>
@@ -476,7 +506,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         {isAddingTab ? (
           <form
             onSubmit={handleAddSubmit}
-            className="flex items-center gap-1 h-[34px] px-2 mb-[1px] bg-white dark:bg-[#202023] border border-[#0067C0] dark:border-[#4CC2FF] rounded-md shrink-0"
+            className="flex items-center gap-1 h-[34px] px-2 mb-[1px] bg-[var(--surface-panel)] border border-[var(--accent)] rounded-md shrink-0"
           >
             <input
               ref={addInputRef}
@@ -496,7 +526,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
             <button
               type="submit"
               aria-label="Confirm new tab"
-              className="p-0.5 text-[#0067C0] dark:text-[#4CC2FF] hover:bg-slate-100 dark:hover:bg-white/10 rounded"
+              className="p-0.5 text-[var(--accent)] hover:bg-[var(--surface-hover)] rounded"
             >
               <Check className="w-3.5 h-3.5" />
             </button>
@@ -516,7 +546,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           <button
             type="button"
             onClick={() => setIsAddingTab(true)}
-            className="app-no-drag flex items-center gap-1 h-[32px] px-2.5 mb-1 rounded-md text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-white/10 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF]"
+            className="app-no-drag flex items-center gap-1 h-[32px] px-2.5 mb-1 rounded-md text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             title="Add project tab"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -525,17 +555,17 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         )}
       </nav>
 
-      {/* Zone 3: Compact utility controls */}
+      {/* Zone 3: Streamlined utility controls */}
       <div className="app-no-drag flex items-center gap-1.5 shrink-0">
         <button
           type="button"
           onClick={onOpenCommandPalette}
-          className="flex items-center gap-2 h-8 px-2.5 rounded-md bg-white dark:bg-[#202023] border border-slate-200 dark:border-[#2E2E32] text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF]"
+          className="flex items-center gap-2 h-8 px-2.5 rounded-md bg-[var(--surface-panel)] border border-[var(--surface-border)] text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-[var(--surface-border-strong)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           title="Open quick command palette (Ctrl+K)"
         >
           <Search className="w-3.5 h-3.5 text-slate-400" />
           <span className="hidden sm:inline">Quick Jump</span>
-          <kbd className="hidden md:inline-block font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#2C2C30] text-slate-500 dark:text-slate-400 border border-slate-200/80 dark:border-[#3A3A3F]">
+          <kbd className="hidden md:inline-block font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--surface-subtle)] text-slate-500 dark:text-slate-400 border border-[var(--surface-border)]">
             Ctrl K
           </kbd>
         </button>
@@ -543,7 +573,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         <button
           type="button"
           onClick={onOpenBackupModal}
-          className="flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF]"
+          className="flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           title="Export or import JSON workspace backup"
         >
           <DatabaseBackup className="w-3.5 h-3.5" />
@@ -552,23 +582,64 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
 
         <button
           type="button"
-          onClick={onToggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-          title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF]"
-        >
-          {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-        </button>
-
-        <button
-          type="button"
           onClick={onOpenGuide}
           aria-label="Open user guide"
           title="User Guide & Shortcuts"
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-white/10 hover:text-[#0067C0] dark:hover:text-[#4CC2FF] transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0067C0] dark:focus-visible:ring-[#4CC2FF]"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-[var(--accent)] transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <HelpCircle className="w-4 h-4" />
         </button>
+
+        {/* Settings (Appearance, Desktop Behavior & App Updates — right of ?) */}
+        <div className="relative">
+          <button
+            type="button"
+            data-theme-settings-trigger="true"
+            onClick={() => setIsThemeSettingsOpen((open) => !open)}
+            aria-label="Settings"
+            aria-haspopup="dialog"
+            aria-expanded={isThemeSettingsOpen}
+            title={
+              updateState.status === 'available' || updateState.status === 'downloaded'
+                ? 'Settings (Update available)'
+                : 'Settings'
+            }
+            className={`relative flex items-center justify-center w-8 h-8 rounded-md transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
+              isThemeSettingsOpen
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] hover:text-[var(--accent)]'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+            {(updateState.status === 'available' ||
+              updateState.status === 'downloaded') && (
+              <span
+                aria-hidden="true"
+                className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[var(--accent)] ring-2 ring-[var(--surface-frame)]"
+              />
+            )}
+          </button>
+
+          {isThemeSettingsOpen && (
+            <ThemeSettingsPopover
+              theme={theme}
+              themePreset={themePreset}
+              accentColor={accentColor}
+              isDesktopApp={isDesktopApp}
+              desktopPrefs={desktopPrefs}
+              updateState={updateState}
+              onChangeTheme={onChangeTheme}
+              onChangeThemePreset={onChangeThemePreset}
+              onChangeAccentColor={onChangeAccentColor}
+              onResetTheme={onResetTheme}
+              onUpdateDesktopPrefs={onUpdateDesktopPrefs}
+              onCheckForUpdates={onCheckForUpdates}
+              onDownloadUpdate={onDownloadUpdate}
+              onInstallUpdate={onInstallUpdate}
+              onClose={() => setIsThemeSettingsOpen(false)}
+            />
+          )}
+        </div>
       </div>
     </header>
   );

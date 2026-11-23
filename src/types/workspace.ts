@@ -34,6 +34,12 @@ export interface SnippetTemplate {
 
 export type SortOption = 'updated' | 'usage' | 'title';
 export type ThemeMode = 'light' | 'dark';
+export type ThemePreset =
+  | 'default'
+  | 'warm-paper'
+  | 'forest-slate'
+  | 'midnight-indigo'
+  | 'high-contrast';
 export type CopyFormat = 'rich' | 'plain' | 'markdown';
 export type InspectorViewMode = 'preview' | 'split' | 'edit';
 
@@ -47,6 +53,8 @@ export interface WorkspaceData {
   activeTag: string | null;
   sortBy: SortOption;
   theme: ThemeMode;
+  themePreset: ThemePreset;
+  accentColor: string; // 'default' (adaptive Fluent blue) or '#RRGGBB'
 }
 
 export interface ParsedVariable {

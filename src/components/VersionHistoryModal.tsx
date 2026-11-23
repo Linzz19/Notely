@@ -85,11 +85,11 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-4xl h-[80vh] max-h-[620px] flex flex-col rounded-lg bg-white dark:bg-[#202023] border border-slate-200 dark:border-[#34343A] shadow-2xl overflow-hidden">
+      <div className="w-full max-w-4xl h-[80vh] max-h-[620px] flex flex-col rounded-lg bg-[var(--surface-panel)] border border-[var(--surface-border)] shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-slate-200 dark:border-[#2E2E32] flex items-center justify-between gap-4 bg-[#F8FAFC] dark:bg-[#1B1B1E]">
+        <div className="px-5 py-3.5 border-b border-[var(--surface-border)] flex items-center justify-between gap-4 bg-[var(--surface-sidebar)]">
           <div className="flex items-center gap-2.5 min-w-0">
-            <History className="w-4 h-4 text-[#0067C0] dark:text-[#4CC2FF] shrink-0" />
+            <History className="w-4 h-4 text-[var(--accent)] shrink-0" />
             <div className="min-w-0">
               <h2
                 id="version-history-title"
@@ -106,7 +106,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close version history"
-            className="p-1.5 rounded-md text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors"
+            className="p-1.5 rounded-md text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-[var(--surface-hover)] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -115,7 +115,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         {/* Body */}
         {versions.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-11 h-11 rounded-lg bg-slate-100 dark:bg-[#28282C] flex items-center justify-center text-slate-400 mb-3">
+            <div className="w-11 h-11 rounded-lg bg-[var(--surface-subtle)] border border-[var(--surface-border)] flex items-center justify-center text-slate-400 mb-3">
               <History className="w-5 h-5" />
             </div>
             <h3 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -126,9 +126,9 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
             </p>
           </div>
         ) : (
-          <div className="flex-1 min-h-0 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-[#2E2E32]">
+          <div className="flex-1 min-h-0 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[var(--surface-border)]">
             {/* Left List: Up to 3 Saved Versions */}
-            <div className="w-full md:w-72 shrink-0 overflow-y-auto p-2.5 space-y-1.5 bg-[#F8FAFC]/60 dark:bg-[#1B1B1E]/60">
+            <div className="w-full md:w-72 shrink-0 overflow-y-auto p-2.5 space-y-1.5 bg-[var(--surface-sidebar)]">
               <div className="px-2 py-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
                 Saved Versions ({versions.length}/3)
               </div>
@@ -141,15 +141,15 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                     onClick={() => setSelectedVersionId(ver.id)}
                     className={`w-full text-left px-3 py-2.5 rounded-md border transition-colors ${
                       isSelected
-                        ? 'bg-white dark:bg-[#26262A] border-[#0067C0]/50 dark:border-[#4CC2FF]/50 shadow-xs'
-                        : 'border-transparent hover:bg-slate-200/50 dark:hover:bg-white/5'
+                        ? 'bg-[var(--surface-elevated)] border-[var(--accent)] shadow-xs'
+                        : 'border-transparent hover:bg-[var(--surface-hover)]'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span
                         className={`text-xs font-semibold ${
                           isSelected
-                            ? 'text-[#0067C0] dark:text-[#4CC2FF]'
+                            ? 'text-[var(--accent)]'
                             : 'text-slate-800 dark:text-slate-200'
                         }`}
                       >
@@ -171,8 +171,8 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
             </div>
 
             {/* Right Pane: Selected Version Preview */}
-            <div className="flex-1 min-w-0 flex flex-col bg-white dark:bg-[#202023]">
-              <div className="px-5 py-2.5 border-b border-slate-200/80 dark:border-[#2E2E32] flex flex-wrap items-center justify-between gap-2">
+            <div className="flex-1 min-w-0 flex flex-col bg-[var(--surface-panel)]">
+              <div className="px-5 py-2.5 border-b border-[var(--surface-border)] flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                   <span>
                     Saved{' '}
@@ -196,13 +196,13 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                   </span>
                 </div>
 
-                <div className="flex items-center p-0.5 rounded-md bg-slate-100 dark:bg-[#2A2A2F]">
+                <div className="flex items-center p-0.5 rounded-md bg-[var(--surface-frame)] border border-[var(--surface-border)]">
                   <button
                     type="button"
                     onClick={() => setPreviewMode('formatted')}
                     className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
                       previewMode === 'formatted'
-                        ? 'bg-white dark:bg-[#38383F] text-slate-900 dark:text-white shadow-xs'
+                        ? 'bg-[var(--surface-elevated)] text-slate-900 dark:text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-400'
                     }`}
                   >
@@ -213,7 +213,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                     onClick={() => setPreviewMode('markdown')}
                     className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${
                       previewMode === 'markdown'
-                        ? 'bg-white dark:bg-[#38383F] text-slate-900 dark:text-white shadow-xs'
+                        ? 'bg-[var(--surface-elevated)] text-slate-900 dark:text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-400'
                     }`}
                   >
@@ -230,7 +230,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                       dangerouslySetInnerHTML={{ __html: renderedHtml }}
                     />
                   ) : (
-                    <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-slate-700 dark:text-slate-300 bg-[#F8FAFC] dark:bg-[#18181B] border border-slate-200 dark:border-[#2E2E32] rounded-md p-4">
+                    <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-slate-700 dark:text-slate-300 bg-[var(--surface-subtle)] border border-[var(--surface-border)] rounded-md p-4">
                       {selectedVersion.content}
                     </pre>
                   )
@@ -241,7 +241,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         )}
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-[#2E2E32] bg-[#F8FAFC] dark:bg-[#1B1B1E] flex items-center justify-between gap-3">
+        <div className="px-5 py-3 border-t border-[var(--surface-border)] bg-[var(--surface-sidebar)] flex items-center justify-between gap-3">
           <span className="text-xs text-slate-500 dark:text-slate-400">
             Restoring saves your current content into history too, so nothing is lost.
           </span>
@@ -249,7 +249,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="h-8 px-3 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-white/10 transition-colors"
+              className="h-8 px-3 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] transition-colors"
             >
               Close
             </button>
@@ -260,7 +260,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                   onRestoreVersion(selectedVersion);
                   onClose();
                 }}
-                className="flex items-center gap-1.5 h-8 px-4 rounded-md bg-[#0067C0] hover:bg-[#005A9E] dark:bg-[#4CC2FF] dark:hover:bg-[#38B6F8] text-white dark:text-[#0F172A] text-xs font-semibold transition-colors whitespace-nowrap"
+                className="flex items-center gap-1.5 h-8 px-4 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors whitespace-nowrap"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Restore This Version</span>

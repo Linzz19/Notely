@@ -13,6 +13,13 @@ const {
 const fs = require('fs');
 const path = require('path');
 
+let autoUpdater = null;
+try {
+  ({ autoUpdater } = require('electron-updater'));
+} catch {
+  autoUpdater = null;
+}
+
 // Prevent multiple instances of Notely.exe
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -23,7 +30,36 @@ if (!gotSingleInstanceLock) {
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+let isSilentUpdateCheck = false;
 const GLOBAL_SUMMON_SHORTCUT = 'CommandOrControl+Shift+Space';
+const isPortableBuild = Boolean(process.env.PORTABLE_EXECUTABLE_DIR);
+
+const DEFAULT_DESKTOP_PREFS = {
+  closeBehavior: 'tray', // 'tray' | 'exit'
+  openAtLogin: false,
+};
+
+let desktopPrefs = { ...DEFAULT_DESKTOP_PREFS };
+
+function getInitialUpdateState() {
+  const currentVersion = app.getVersion();
+  const canUpdate = Boolean(app.isPackaged && !isPortableBuild && autoUpdater);
+  return {
+    status: canUpdate ? 'idle' : 'unsupported',
+    currentVersion,
+    availableVersion: null,
+    progressPercent: 0,
+    errorMessage: canUpdate
+      ? null
+      : isPortableBuild
+        ? 'In-app updates require the Notely Setup installer.'
+        : 'In-app updates are available in the installed Windows desktop app.',
+    canUpdate,
+    isPortable: isPortableBuild,
+  };
+}
+
+let updateState = null;
 
 function getDataDir() {
   const dir = app.getPath('userData');
@@ -39,6 +75,10 @@ function getWindowStatePath() {
   return path.join(getDataDir(), 'window-state.json');
 }
 
+function getDesktopPrefsPath() {
+  return path.join(getDataDir(), 'desktop-prefs.json');
+}
+
 function getIconPath() {
   const packagedIcon = path.join(process.resourcesPath || '', 'electron', 'icon.png');
   if (app.isPackaged && fs.existsSync(packagedIcon)) {
@@ -46,6 +86,214 @@ function getIconPath() {
   }
   const localIcon = path.join(__dirname, 'icon.png');
   return fs.existsSync(localIcon) ? localIcon : undefined;
+}
+
+function atomicWriteJson(filePath, dataString) {
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, dataString, 'utf8');
+  fs.renameSync(tmpPath, filePath);
+}
+
+function canConfigureStartup() {
+  return Boolean(app.isPackaged && !isPortableBuild && (process.platform === 'win32' || process.platform === 'darwin'));
+}
+
+function loadDesktopPrefs() {
+  let saved = {};
+  try {
+    const raw = fs.readFileSync(getDesktopPrefsPath(), 'utf8');
+    saved = JSON.parse(raw) || {};
+  } catch {
+    saved = {};
+  }
+
+  const closeBehavior = saved.closeBehavior === 'exit' ? 'exit' : 'tray';
+  let openAtLogin = Boolean(saved.openAtLogin);
+
+  if (canConfigureStartup()) {
+    try {
+      const osSettings = app.getLoginItemSettings();
+      if (typeof osSettings.openAtLogin === 'boolean') {
+        openAtLogin = osSettings.openAtLogin;
+      }
+    } catch {
+      // Fall back to saved preference
+    }
+  }
+
+  desktopPrefs = { closeBehavior, openAtLogin };
+  return getDesktopPrefsPayload();
+}
+
+function saveDesktopPrefs(nextPrefs) {
+  try {
+    atomicWriteJson(getDesktopPrefsPath(), JSON.stringify(nextPrefs, null, 2));
+  } catch {
+    // Ignore non-fatal preference write failure
+  }
+}
+
+function getDesktopPrefsPayload() {
+  return {
+    closeBehavior: desktopPrefs.closeBehavior,
+    openAtLogin: desktopPrefs.openAtLogin,
+    canConfigureStartup: canConfigureStartup(),
+    isPortable: isPortableBuild,
+  };
+}
+
+function applyDesktopPrefsPatch(patch) {
+  if (!patch || typeof patch !== 'object') {
+    return getDesktopPrefsPayload();
+  }
+
+  const next = { ...desktopPrefs };
+
+  if (patch.closeBehavior === 'tray' || patch.closeBehavior === 'exit') {
+    next.closeBehavior = patch.closeBehavior;
+  }
+
+  if (typeof patch.openAtLogin === 'boolean') {
+    next.openAtLogin = patch.openAtLogin;
+    if (canConfigureStartup()) {
+      try {
+        app.setLoginItemSettings({
+          openAtLogin: patch.openAtLogin,
+          path: process.execPath,
+        });
+      } catch {
+        // Ignore OS login item error
+      }
+    }
+  }
+
+  desktopPrefs = next;
+  saveDesktopPrefs(desktopPrefs);
+  return getDesktopPrefsPayload();
+}
+
+function broadcastUpdateState(patch) {
+  updateState = {
+    ...(updateState || getInitialUpdateState()),
+    ...patch,
+  };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.webContents.send('updater:status', updateState);
+    } catch {
+      // Ignore if renderer is tearing down
+    }
+  }
+  return updateState;
+}
+
+function setupAutoUpdater() {
+  updateState = getInitialUpdateState();
+  if (!updateState.canUpdate || !autoUpdater) return;
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+
+  autoUpdater.on('checking-for-update', () => {
+    broadcastUpdateState({
+      status: 'checking',
+      errorMessage: null,
+    });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    isSilentUpdateCheck = false;
+    broadcastUpdateState({
+      status: 'available',
+      availableVersion: info?.version || null,
+      progressPercent: 0,
+      errorMessage: null,
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    const wasSilent = isSilentUpdateCheck;
+    isSilentUpdateCheck = false;
+    broadcastUpdateState({
+      status: wasSilent ? 'idle' : 'up-to-date',
+      availableVersion: null,
+      progressPercent: 0,
+      errorMessage: null,
+    });
+  });
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    const pct = Math.max(0, Math.min(100, Math.round(progressObj?.percent || 0)));
+    broadcastUpdateState({
+      status: 'downloading',
+      progressPercent: pct,
+      errorMessage: null,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    isSilentUpdateCheck = false;
+    broadcastUpdateState({
+      status: 'downloaded',
+      availableVersion: info?.version || updateState?.availableVersion || null,
+      progressPercent: 100,
+      errorMessage: null,
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    const wasSilent = isSilentUpdateCheck;
+    isSilentUpdateCheck = false;
+    if (wasSilent) {
+      broadcastUpdateState({
+        status: 'idle',
+        errorMessage: null,
+      });
+      return;
+    }
+    const rawMsg = err && typeof err.message === 'string' ? err.message : 'Unable to check for updates.';
+    const friendlyMsg = /ENOTFOUND|ERR_INTERNET_DISCONNECTED|ETIMEDOUT|ECONNREFUSED|net::/i.test(rawMsg)
+      ? 'Could not reach GitHub Releases. Check your internet connection and try again.'
+      : 'Update check failed. Please try again in a moment.';
+    broadcastUpdateState({
+      status: 'error',
+      errorMessage: friendlyMsg,
+    });
+  });
+}
+
+async function triggerUpdateCheck(silent = false) {
+  if (!updateState) {
+    updateState = getInitialUpdateState();
+  }
+  if (!updateState.canUpdate || !autoUpdater) {
+    return updateState;
+  }
+  if (updateState.status === 'checking' || updateState.status === 'downloading') {
+    return updateState;
+  }
+
+  isSilentUpdateCheck = silent;
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (err) {
+    if (silent) {
+      isSilentUpdateCheck = false;
+      broadcastUpdateState({ status: 'idle', errorMessage: null });
+    } else {
+      isSilentUpdateCheck = false;
+      const rawMsg = err && typeof err.message === 'string' ? err.message : '';
+      const friendlyMsg = /ENOTFOUND|ERR_INTERNET_DISCONNECTED|ETIMEDOUT|ECONNREFUSED|net::/i.test(rawMsg)
+        ? 'Could not reach GitHub Releases. Check your internet connection and try again.'
+        : 'Unable to check for updates right now.';
+      broadcastUpdateState({
+        status: 'error',
+        errorMessage: friendlyMsg,
+      });
+    }
+  }
+  return updateState;
 }
 
 function loadWindowState() {
@@ -83,33 +331,64 @@ function saveWindowState(win) {
   }
 }
 
-function atomicWriteJson(filePath, dataString) {
-  const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, dataString, 'utf8');
-  fs.renameSync(tmpPath, filePath);
-}
+const PRESET_FRAME_OVERLAYS = {
+  default: {
+    light: { color: '#F3F4F6', symbolColor: '#1E293B' },
+    dark: { color: '#161618', symbolColor: '#F1F5F9' },
+  },
+  'warm-paper': {
+    light: { color: '#F3EFE7', symbolColor: '#292524' },
+    dark: { color: '#191614', symbolColor: '#F5F0E8' },
+  },
+  'forest-slate': {
+    light: { color: '#EDF2EE', symbolColor: '#1C2A22' },
+    dark: { color: '#131917', symbolColor: '#ECFDF5' },
+  },
+  'midnight-indigo': {
+    light: { color: '#EEF1F8', symbolColor: '#1E2438' },
+    dark: { color: '#121521', symbolColor: '#EEF2FF' },
+  },
+  'high-contrast': {
+    light: { color: '#E8ECF0', symbolColor: '#0F172A' },
+    dark: { color: '#09090B', symbolColor: '#FFFFFF' },
+  },
+};
 
 function readInitialTheme() {
   try {
     const raw = fs.readFileSync(getWorkspaceFilePath(), 'utf8');
     const parsed = JSON.parse(raw);
-    return parsed?.theme === 'dark' ? 'dark' : 'light';
+    const mode = parsed?.theme === 'dark' ? 'dark' : 'light';
+    const presetKey =
+      typeof parsed?.themePreset === 'string' && PRESET_FRAME_OVERLAYS[parsed.themePreset]
+        ? parsed.themePreset
+        : 'default';
+    const overlay = PRESET_FRAME_OVERLAYS[presetKey][mode];
+    return { mode, color: overlay.color, symbolColor: overlay.symbolColor };
   } catch {
-    return 'light';
+    const fallback = PRESET_FRAME_OVERLAYS.default.light;
+    return { mode: 'light', color: fallback.color, symbolColor: fallback.symbolColor };
   }
 }
 
-function getTitleBarOverlayOptions(theme) {
-  if (theme === 'dark') {
+function getTitleBarOverlayOptions(themeInput) {
+  if (
+    themeInput &&
+    typeof themeInput === 'object' &&
+    typeof themeInput.color === 'string' &&
+    typeof themeInput.symbolColor === 'string'
+  ) {
     return {
-      color: '#161618',
-      symbolColor: '#F1F5F9',
+      color: themeInput.color,
+      symbolColor: themeInput.symbolColor,
       height: 51,
     };
   }
+  const mode = themeInput === 'dark' ? 'dark' : 'light';
+  const fallback = PRESET_FRAME_OVERLAYS.default[mode];
   return {
-    color: '#F3F4F6',
-    symbolColor: '#0F172A',
+    color: fallback.color,
+    symbolColor: fallback.symbolColor,
     height: 51,
   };
 }
@@ -145,7 +424,7 @@ function createMainWindow() {
     minHeight: 520,
     title: 'Notely',
     icon: iconPath,
-    backgroundColor: initialTheme === 'dark' ? '#161618' : '#F3F4F6',
+    backgroundColor: initialTheme.color,
     autoHideMenuBar: true,
     show: false,
     ...(process.platform === 'win32'
@@ -183,12 +462,18 @@ function createMainWindow() {
     return { action: 'deny' };
   });
 
-  // Minimize to Windows system tray on close unless explicitly quitting
+  // Honor user's Close Button (X) preference: Minimize to Tray vs Exit App
   mainWindow.on('close', (e) => {
     saveWindowState(mainWindow);
-    if (!isQuitting && tray) {
+    if (!isQuitting && desktopPrefs.closeBehavior === 'tray' && tray) {
       e.preventDefault();
       mainWindow.hide();
+      return;
+    }
+    isQuitting = true;
+    if (tray) {
+      tray.destroy();
+      tray = null;
     }
   });
 
@@ -222,6 +507,13 @@ function createSystemTray() {
     },
     { type: 'separator' },
     {
+      label: 'Check for Updates...',
+      click: () => {
+        showAndFocusWindow(false);
+        void triggerUpdateCheck(false);
+      },
+    },
+    {
       label: 'Open Local Data Folder',
       click: () => {
         shell.openPath(getDataDir());
@@ -251,7 +543,7 @@ function createSystemTray() {
   });
 }
 
-// IPC handlers for native Windows storage, clipboard, theme, and file dialogs
+// IPC handlers for native Windows storage, clipboard, theme, desktop preferences, updates, and file dialogs
 function registerIpcHandlers() {
   ipcMain.handle('workspace:load', () => {
     const filePath = getWorkspaceFilePath();
@@ -307,6 +599,51 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('desktop:getPreferences', () => getDesktopPrefsPayload());
+
+  ipcMain.handle('desktop:setPreferences', (_event, patch) =>
+    applyDesktopPrefsPatch(patch)
+  );
+
+  ipcMain.handle('updater:getState', () => updateState || getInitialUpdateState());
+
+  ipcMain.handle('updater:check', async () => triggerUpdateCheck(false));
+
+  ipcMain.handle('updater:download', async () => {
+    if (!updateState?.canUpdate || !autoUpdater) {
+      return updateState || getInitialUpdateState();
+    }
+    if (updateState.status === 'downloading' || updateState.status === 'downloaded') {
+      return updateState;
+    }
+    try {
+      broadcastUpdateState({ status: 'downloading', progressPercent: 0, errorMessage: null });
+      await autoUpdater.downloadUpdate();
+    } catch {
+      broadcastUpdateState({
+        status: 'error',
+        errorMessage: 'Download interrupted. Check your connection and try again.',
+      });
+    }
+    return updateState;
+  });
+
+  ipcMain.handle('updater:install', () => {
+    if (!updateState?.canUpdate || !autoUpdater || updateState.status !== 'downloaded') {
+      return false;
+    }
+    // Ensure system tray close interception does not block installer restart
+    isQuitting = true;
+    if (tray) {
+      tray.destroy();
+      tray = null;
+    }
+    setImmediate(() => {
+      autoUpdater.quitAndInstall(true, true);
+    });
+    return true;
+  });
+
   ipcMain.handle('backup:export', async (_event, defaultFilename, jsonString) => {
     if (!mainWindow) return { canceled: true };
     const result = await dialog.showSaveDialog(mainWindow, {
@@ -348,9 +685,18 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   app.setAppUserModelId('com.notely.desktop');
   Menu.setApplicationMenu(null);
+  loadDesktopPrefs();
+  setupAutoUpdater();
   registerIpcHandlers();
   createMainWindow();
   createSystemTray();
+
+  // Silent startup update check 4 seconds after launch (installed builds only)
+  if (updateState?.canUpdate) {
+    setTimeout(() => {
+      void triggerUpdateCheck(true);
+    }, 4000);
+  }
 
   // Global hotkey to summon/hide Notely from any Windows application
   try {
@@ -379,7 +725,7 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' && isQuitting) {
+  if (process.platform !== 'darwin' && (isQuitting || desktopPrefs.closeBehavior === 'exit')) {
     app.quit();
   }
 });

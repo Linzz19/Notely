@@ -8,8 +8,14 @@ import { TemplateInspector } from './components/TemplateInspector';
 import { TemplateListPane } from './components/TemplateListPane';
 import { ToastContainer } from './components/ToastContainer';
 import { TopTabBar } from './components/TopTabBar';
+import { UpdateBanner } from './components/UpdateBanner';
 import { VersionHistoryModal } from './components/VersionHistoryModal';
 import { createStarterWorkspace } from './data/starterWorkspace';
+import {
+  AppUpdateState,
+  DesktopPreferences,
+  DesktopPreferencesPatch,
+} from './types/electron';
 import {
   CopyFormat,
   InspectorViewMode,
@@ -17,6 +23,8 @@ import {
   SortOption,
   TemplateCategory,
   TemplateVersion,
+  ThemeMode,
+  ThemePreset,
   ToastMessage,
   WorkspaceData,
   WorkspaceTab,
@@ -28,6 +36,7 @@ import {
   saveWorkspace,
 } from './utils/storage';
 import { copyTemplateToClipboard, extractVariables } from './utils/templateEngine';
+import { applyThemeToDocument } from './utils/theme';
 
 const MAX_HISTORY_VERSIONS = 3;
 const EDIT_BURST_IDLE_MS = 3500;
@@ -63,7 +72,29 @@ export default function App() {
   const [copiedInspectorFormat, setCopiedInspectorFormat] =
     useState<CopyFormat | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const desktopHydratedRef = useRef(!window.fluentDesktop?.isElectron);
+  const isDesktopApp = Boolean(window.fluentDesktop?.isElectron);
+  const [desktopPrefs, setDesktopPrefs] = useState<DesktopPreferences>({
+    closeBehavior: 'tray',
+    openAtLogin: false,
+    canConfigureStartup: false,
+    isPortable: false,
+  });
+  const [updateState, setUpdateState] = useState<AppUpdateState>(() => ({
+    status: 'unsupported',
+    currentVersion:
+      (import.meta.env.VITE_APP_VERSION as string | undefined) || '1.0.0',
+    availableVersion: null,
+    progressPercent: 0,
+    errorMessage: isDesktopApp
+      ? null
+      : 'In-app updates apply in the Windows Setup desktop app.',
+    canUpdate: false,
+    isPortable: false,
+  }));
+  const [dismissedUpdateBannerKey, setDismissedUpdateBannerKey] = useState<
+    string | null
+  >(null);
+  const desktopHydratedRef = useRef(!isDesktopApp);
   const editBurstRef = useRef<{ templateId: string; lastEditAt: number } | null>(
     null
   );
@@ -98,24 +129,63 @@ export default function App() {
     });
   }, []);
 
+  // Hydrate Windows desktop preferences (Close behavior + Startup) and live auto-updater state
+  useEffect(() => {
+    const bridge = window.fluentDesktop;
+    if (!bridge?.isElectron) return;
+    let cancelled = false;
+
+    if (bridge.getDesktopPreferences) {
+      void bridge.getDesktopPreferences().then((prefs) => {
+        if (!cancelled && prefs) {
+          setDesktopPrefs(prefs);
+        }
+      });
+    }
+
+    if (bridge.getUpdateState) {
+      void bridge.getUpdateState().then((state) => {
+        if (!cancelled && state) {
+          setUpdateState(state);
+        }
+      });
+    }
+
+    const unsubscribe = bridge.onUpdateStatus
+      ? bridge.onUpdateStatus((nextState) => {
+          if (!cancelled && nextState) {
+            setUpdateState(nextState);
+          }
+        })
+      : undefined;
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
   // Persist workspace to AppData (Electron) and localStorage
   useEffect(() => {
     if (!desktopHydratedRef.current) return;
     saveWorkspace(workspace);
   }, [workspace]);
 
-  // Sync Tailwind v4 .dark class on <html> and Windows 11 titlebar overlay color
+  // Sync theme mode, surface preset, computed accent CSS variables, and Windows 11 titlebar overlay
   useEffect(() => {
-    const root = document.documentElement;
-    if (workspace.theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
+    const applied = applyThemeToDocument(
+      workspace.theme,
+      workspace.themePreset,
+      workspace.accentColor
+    );
     if (window.fluentDesktop?.syncTheme) {
-      void window.fluentDesktop.syncTheme(workspace.theme);
+      void window.fluentDesktop.syncTheme({
+        mode: applied.mode,
+        color: applied.color,
+        symbolColor: applied.symbolColor,
+      });
     }
-  }, [workspace.theme]);
+  }, [workspace.theme, workspace.themePreset, workspace.accentColor]);
 
   const pushToast = useCallback(
     (
@@ -613,6 +683,9 @@ export default function App() {
         activeTabId: firstTabId,
         activeCategoryId: 'all',
         activeTag: null,
+        theme: parsed.theme ?? prev.theme,
+        themePreset: parsed.themePreset ?? prev.themePreset,
+        accentColor: parsed.accentColor ?? prev.accentColor,
       }));
       setSelectedTemplateId(firstTplId);
       setSearchQuery('');
@@ -675,11 +748,86 @@ export default function App() {
     setWorkspace((prev) => ({
       ...starter,
       theme: prev.theme,
+      themePreset: prev.themePreset,
+      accentColor: prev.accentColor,
     }));
     setSelectedTemplateId(starter.templates[0]?.id ?? null);
     setSearchQuery('');
     pushToast('Restored starter workspace', 'info');
   }, [pushToast]);
+
+  const handleChangeTheme = useCallback((theme: ThemeMode) => {
+    setWorkspace((prev) => ({ ...prev, theme }));
+  }, []);
+
+  const handleChangeThemePreset = useCallback((themePreset: ThemePreset) => {
+    setWorkspace((prev) => ({ ...prev, themePreset }));
+  }, []);
+
+  const handleChangeAccentColor = useCallback((accentColor: string) => {
+    setWorkspace((prev) => ({ ...prev, accentColor }));
+  }, []);
+
+  const handleResetTheme = useCallback(() => {
+    setWorkspace((prev) => ({
+      ...prev,
+      themePreset: 'default',
+      accentColor: 'default',
+    }));
+    pushToast('Theme reset to Default Fluent', 'info');
+  }, [pushToast]);
+
+  const handleUpdateDesktopPrefs = useCallback(
+    (patch: DesktopPreferencesPatch) => {
+      const bridge = window.fluentDesktop;
+      if (!bridge?.setDesktopPreferences) return;
+      void bridge.setDesktopPreferences(patch).then((updated) => {
+        if (updated) {
+          setDesktopPrefs(updated);
+          if (patch.closeBehavior !== undefined) {
+            pushToast(
+              patch.closeBehavior === 'tray'
+                ? 'Close button set to Minimize to Tray'
+                : 'Close button set to Exit App',
+              'info'
+            );
+          } else if (patch.openAtLogin !== undefined) {
+            pushToast(
+              patch.openAtLogin
+                ? 'Notely will launch at Windows startup'
+                : 'Disabled launch at Windows startup',
+              'info'
+            );
+          }
+        }
+      });
+    },
+    [pushToast]
+  );
+
+  const handleCheckForUpdates = useCallback(() => {
+    const bridge = window.fluentDesktop;
+    if (!bridge?.checkForUpdates) return;
+    setDismissedUpdateBannerKey(null);
+    void bridge.checkForUpdates().then((nextState) => {
+      if (nextState) setUpdateState(nextState);
+    });
+  }, []);
+
+  const handleDownloadUpdate = useCallback(() => {
+    const bridge = window.fluentDesktop;
+    if (!bridge?.downloadUpdate) return;
+    setDismissedUpdateBannerKey(null);
+    void bridge.downloadUpdate().then((nextState) => {
+      if (nextState) setUpdateState(nextState);
+    });
+  }, []);
+
+  const handleInstallUpdate = useCallback(() => {
+    const bridge = window.fluentDesktop;
+    if (!bridge?.installUpdate) return;
+    void bridge.installUpdate();
+  }, []);
 
   // Global keyboard shortcuts (Ctrl+K / Cmd+K)
   useEffect(() => {
@@ -703,23 +851,30 @@ export default function App() {
   }, [workspace.activeCategoryId, categoriesInTab]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#F3F4F6] dark:bg-[#161618] text-slate-900 dark:text-slate-100">
+    <div className="h-screen w-screen overflow-hidden flex flex-col bg-[var(--surface-frame)] text-slate-900 dark:text-slate-100">
       {/* Top Window Bar & Project Tab Strip */}
       <TopTabBar
         tabs={workspace.tabs}
         activeTabId={activeTab?.id ?? ''}
         theme={workspace.theme}
+        themePreset={workspace.themePreset}
+        accentColor={workspace.accentColor}
+        isDesktopApp={isDesktopApp}
+        desktopPrefs={desktopPrefs}
+        updateState={updateState}
         onSelectTab={handleSelectTab}
         onCreateTab={handleCreateTab}
         onRenameTab={handleRenameTab}
         onDeleteTab={handleDeleteTab}
         onReorderTabs={handleReorderTabs}
-        onToggleTheme={() =>
-          setWorkspace((prev) => ({
-            ...prev,
-            theme: prev.theme === 'light' ? 'dark' : 'light',
-          }))
-        }
+        onChangeTheme={handleChangeTheme}
+        onChangeThemePreset={handleChangeThemePreset}
+        onChangeAccentColor={handleChangeAccentColor}
+        onResetTheme={handleResetTheme}
+        onUpdateDesktopPrefs={handleUpdateDesktopPrefs}
+        onCheckForUpdates={handleCheckForUpdates}
+        onDownloadUpdate={handleDownloadUpdate}
+        onInstallUpdate={handleInstallUpdate}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onOpenBackupModal={() => setIsBackupModalOpen(true)}
         onOpenGuide={() => setIsGuideModalOpen(true)}
@@ -881,6 +1036,22 @@ export default function App() {
           onClose={() => setIsHistoryModalOpen(false)}
           onRestoreVersion={(version) =>
             handleRestoreTemplateVersion(selectedTemplate.id, version)
+          }
+        />
+      )}
+
+      {/* Non-Blocking In-App Update Banner */}
+      {dismissedUpdateBannerKey !==
+        `${updateState.status}:${updateState.availableVersion || ''}` && (
+        <UpdateBanner
+          updateState={updateState}
+          hasActiveToasts={toasts.length > 0}
+          onDownload={handleDownloadUpdate}
+          onInstall={handleInstallUpdate}
+          onDismiss={() =>
+            setDismissedUpdateBannerKey(
+              `${updateState.status}:${updateState.availableVersion || ''}`
+            )
           }
         />
       )}

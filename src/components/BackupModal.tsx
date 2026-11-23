@@ -97,9 +97,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-lg rounded-lg bg-white dark:bg-[#202023] border border-slate-200 dark:border-[#34343A] shadow-2xl overflow-hidden">
+      <div className="w-full max-w-lg rounded-lg bg-[var(--surface-panel)] border border-[var(--surface-border)] shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-slate-200 dark:border-[#2E2E32] flex items-center justify-between bg-[#F8FAFC] dark:bg-[#1B1B1E]">
+        <div className="px-5 py-3.5 border-b border-[var(--surface-border)] flex items-center justify-between bg-[var(--surface-sidebar)]">
           <div>
             <h2
               id="backup-modal-title"
@@ -117,7 +117,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Close backup modal"
-            className="p-1.5 rounded-md text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/10"
+            className="p-1.5 rounded-md text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-[var(--surface-hover)]"
           >
             <X className="w-4 h-4" />
           </button>
@@ -126,7 +126,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         <div className="p-5 space-y-5">
           {/* Native Windows Data Folder Info (visible when running as .exe) */}
           {isElectron && desktopDataPath && (
-            <div className="p-3 rounded-md bg-[#F8FAFC] dark:bg-[#19191C] border border-slate-200 dark:border-[#2E2E32] flex items-center justify-between gap-3">
+            <div className="p-3 rounded-md bg-[var(--surface-subtle)] border border-[var(--surface-border)] flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                   Windows Local Data File
@@ -141,7 +141,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <button
                 type="button"
                 onClick={() => void window.fluentDesktop?.openDataFolder()}
-                className="flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-slate-200 dark:border-[#34343A] bg-white dark:bg-[#242428] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors whitespace-nowrap shrink-0"
+                className="flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--surface-border)] bg-[var(--surface-elevated)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)] transition-colors whitespace-nowrap shrink-0"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
                 <span>Open Folder</span>
@@ -150,19 +150,19 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           )}
 
           {/* Export Section */}
-          <div className="flex items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-[#2E2E32]">
+          <div className="flex items-center justify-between gap-4 pb-4 border-b border-[var(--surface-border)]">
             <div>
               <h3 className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                 Export Workspace Backup
               </h3>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                Save all tabs, categories, tags, and templates as a portable JSON file.
+                Save all tabs, categories, tags, templates, and theme preferences as a portable JSON file.
               </p>
             </div>
             <button
               type="button"
               onClick={() => void downloadWorkspaceBackup(workspace)}
-              className="flex items-center gap-1.5 h-9 px-3.5 rounded-md bg-[#0067C0] hover:bg-[#005A9E] dark:bg-[#4CC2FF] dark:hover:bg-[#38B6F8] text-white dark:text-[#0F172A] text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 h-9 px-3.5 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export JSON</span>
@@ -170,7 +170,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           </div>
 
           {/* Import Section */}
-          <div className="space-y-3 pb-4 border-b border-slate-200 dark:border-[#2E2E32]">
+          <div className="space-y-3 pb-4 border-b border-[var(--surface-border)]">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h3 className="text-xs font-semibold text-slate-800 dark:text-slate-200">
@@ -190,7 +190,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <button
                 type="button"
                 onClick={() => void handleChooseImportFile()}
-                className="flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-slate-200 dark:border-[#34343A] bg-white dark:bg-[#242428] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors whitespace-nowrap shrink-0"
+                className="flex items-center gap-1.5 h-9 px-3.5 rounded-md border border-[var(--surface-border)] bg-[var(--surface-elevated)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)] transition-colors whitespace-nowrap shrink-0"
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span>Choose File</span>
@@ -205,7 +205,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             )}
 
             {parsedPreview && (
-              <div className="p-3.5 rounded-md bg-[#F8FAFC] dark:bg-[#19191C] border border-slate-200 dark:border-[#2E2E32] space-y-2.5">
+              <div className="p-3.5 rounded-md bg-[var(--surface-subtle)] border border-[var(--surface-border)] space-y-2.5">
                 <p className="text-xs text-slate-700 dark:text-slate-200 tabular-nums">
                   Ready to import{' '}
                   <span className="font-semibold">{parsedPreview.tabs.length} tabs</span>,{' '}
@@ -225,7 +225,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                       onImportMerge(parsedPreview);
                       onClose();
                     }}
-                    className="h-8 px-3 rounded-md bg-[#0067C0] dark:bg-[#4CC2FF] text-white dark:text-[#0F172A] text-xs font-semibold hover:opacity-95"
+                    className="h-8 px-3 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors"
                   >
                     Merge Into Workspace
                   </button>
@@ -235,7 +235,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                       onImportReplace(parsedPreview);
                       onClose();
                     }}
-                    className="h-8 px-3 rounded-md border border-slate-200 dark:border-[#34343A] bg-white dark:bg-[#242428] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
+                    className="h-8 px-3 rounded-md border border-[var(--surface-border)] bg-[var(--surface-elevated)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)]"
                   >
                     Replace Existing
                   </button>
@@ -269,7 +269,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setConfirmReset(false)}
-                  className="h-8 px-2.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10"
+                  className="h-8 px-2.5 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)]"
                 >
                   Cancel
                 </button>
@@ -278,7 +278,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               <button
                 type="button"
                 onClick={() => setConfirmReset(true)}
-                className="flex items-center gap-1.5 h-8 px-3 rounded-md border border-slate-200 dark:border-[#34343A] text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-800 transition-colors shrink-0"
+                className="flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--surface-border)] text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-800 transition-colors shrink-0"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Reset</span>

@@ -10,6 +10,8 @@ export function createStarterWorkspace(): WorkspaceData {
     activeTag: null,
     sortBy: 'updated',
     theme: 'light',
+    themePreset: 'default',
+    accentColor: 'default',
     tabs: [
       {
         id: 'tab-support',
