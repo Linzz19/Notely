@@ -660,11 +660,11 @@ export const CategorySidebar: React.FC<CategorySidebarProps> = ({
       {/* Desktop rail */}
       <div className="hidden lg:block h-full shrink-0">{sidebarContent}</div>
 
-      {/* Mobile / narrow-window slide-over drawer (positioned below 52px Electron titlebar) */}
+      {/* Mobile / narrow-window slide-over drawer (positioned below 78px titlebar + tab bar) */}
       {isMobileOpen && (
-        <div className="app-no-drag lg:hidden fixed inset-x-0 top-[52px] bottom-0 z-40 flex">
+        <div className="app-no-drag lg:hidden fixed inset-x-0 top-[78px] bottom-0 z-40 flex">
           <div
-            className="app-no-drag fixed inset-x-0 top-[52px] bottom-0 bg-black/40"
+            className="app-no-drag fixed inset-x-0 top-[78px] bottom-0 bg-black/40"
             onClick={onCloseMobile}
             aria-hidden="true"
           />

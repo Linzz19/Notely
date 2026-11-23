@@ -30,6 +30,10 @@ files:
   - '!node_modules/lucide-react/**/*'
   - '!node_modules/express/**/*'
   - '!node_modules/dotenv/**/*'
+  - '!node_modules/eslint*/**/*'
+  - '!node_modules/@eslint*/**/*'
+  - '!node_modules/firebase/**/*'
+  - '!node_modules/@firebase/**/*'
   - '!node_modules/**/*.map'
   - '!node_modules/**/*.d.ts'
 extraResources:

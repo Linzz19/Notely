@@ -293,27 +293,30 @@ export const GuideModal: React.FC<GuideModalProps> = ({ onClose }) => {
       },
       {
         id: 'backup',
-        title: 'Local Storage & JSON Backup',
-        summary: 'Export portable backups and merge or restore across devices.',
-        keywords: 'backup export import json local storage merge replace reset appdata',
+        title: 'Cloud Sync & JSON Backup',
+        summary: 'Auto-sync via Google Sign-In or export portable JSON backups.',
+        keywords: 'backup export import json local storage merge replace reset appdata google login firebase cloud sync account',
         icon: <DatabaseBackup className="w-4 h-4" />,
         content: (
           <div className="space-y-4">
             <div>
               <h3 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">
-                Offline-First Storage &amp; JSON Portability
+                Google Cloud Sync &amp; Offline-First JSON Portability
               </h3>
               <p className="mt-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                In the Windows desktop app (<code className="font-mono text-xs">Notely.exe</code>), all tabs, categories, templates, theme settings, and usage counts are saved locally to <code className="font-mono text-xs">%APPDATA%\Notely\workspace.json</code> with zero cloud dependency.
+                Notely saves instantly to your device (<code className="font-mono text-xs">%APPDATA%\Notely\workspace.json</code> on Windows) so it always works offline. Click <strong>Sign In</strong> in the top bar with your Google account to automatically sync all tabs, categories, templates, and theme appearance across your devices via Firebase Cloud.
               </p>
             </div>
 
             <div className="space-y-2 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
               <div className="p-3 rounded-md border border-[var(--surface-border)]">
-                <strong>Export JSON:</strong> Click <strong>Backup</strong> in the top bar and select <strong>Export JSON</strong> to save a timestamped snapshot of your entire workspace via File Explorer.
+                <strong className="text-slate-900 dark:text-slate-100">Google Sign-In &amp; Auto-Sync:</strong> Every signed-in user gets a private cloud workspace isolated to their account. Changes sync automatically in the background and merge safely when signing in on a new computer.
               </div>
               <div className="p-3 rounded-md border border-[var(--surface-border)]">
-                <strong>Merge vs. Replace Import:</strong> When importing a <code className="font-mono">.json</code> backup file, choose <strong>Merge Into Workspace</strong> to add its tabs alongside your existing ones, or <strong>Replace Existing</strong> to restore the exact snapshot.
+                <strong className="text-slate-900 dark:text-slate-100">Export JSON:</strong> Click <strong>Backup</strong> in the top bar and select <strong>Export JSON</strong> to save a timestamped snapshot of your entire workspace via File Explorer.
+              </div>
+              <div className="p-3 rounded-md border border-[var(--surface-border)]">
+                <strong className="text-slate-900 dark:text-slate-100">Merge vs. Replace Import:</strong> When importing a <code className="font-mono">.json</code> backup file, choose <strong>Merge Into Workspace</strong> to add its tabs alongside your existing ones, or <strong>Replace Existing</strong> to restore the exact snapshot.
               </div>
             </div>
           </div>

@@ -11,6 +11,7 @@ const {
   Tray,
 } = require('electron');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 
 let autoUpdater = null;
@@ -18,6 +19,89 @@ try {
   ({ autoUpdater } = require('electron-updater'));
 } catch {
   autoUpdater = null;
+}
+
+const CHROME_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36';
+const LOCAL_APP_PORT = 47821;
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+};
+
+let localAppServer = null;
+let localAppUrl = null;
+
+function isFirebaseAuthUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host.endsWith('.firebaseapp.com') ||
+      host === 'accounts.google.com' ||
+      host === 'apis.google.com' ||
+      host === 'accounts.youtube.com' ||
+      host === 'myaccount.google.com'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function startLocalAppServer() {
+  if (localAppUrl) return Promise.resolve(localAppUrl);
+
+  const distDir = path.resolve(__dirname, '..', 'dist');
+
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const reqPath = decodeURIComponent((req.url || '/').split('?')[0]);
+      const relativePath = reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, '');
+      let filePath = path.resolve(distDir, relativePath);
+
+      // Strict path traversal protection
+      if (!filePath.startsWith(distDir)) {
+        res.writeHead(403);
+        res.end('Forbidden');
+        return;
+      }
+
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        filePath = path.join(distDir, 'index.html');
+      }
+
+      const ext = path.extname(filePath).toLowerCase();
+      res.writeHead(200, {
+        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+        'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000',
+      });
+      fs.createReadStream(filePath).pipe(res);
+    });
+
+    const onListening = () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : LOCAL_APP_PORT;
+      localAppServer = server;
+      localAppUrl = `http://localhost:${port}`;
+      resolve(localAppUrl);
+    };
+
+    server.once('error', () => {
+      // Fallback to an OS-assigned localhost port if preferred port is occupied
+      server.listen(0, '127.0.0.1', onListening);
+    });
+
+    server.listen(LOCAL_APP_PORT, '127.0.0.1', onListening);
+  });
 }
 
 // Prevent multiple instances of Notely.exe
@@ -381,7 +465,7 @@ function getTitleBarOverlayOptions(themeInput) {
     return {
       color: themeInput.color,
       symbolColor: themeInput.symbolColor,
-      height: 51,
+      height: 34,
     };
   }
   const mode = themeInput === 'dark' ? 'dark' : 'light';
@@ -389,7 +473,7 @@ function getTitleBarOverlayOptions(themeInput) {
   return {
     color: fallback.color,
     symbolColor: fallback.symbolColor,
-    height: 51,
+    height: 34,
   };
 }
 
@@ -450,8 +534,25 @@ function createMainWindow() {
     mainWindow?.show();
   });
 
-  // Open external links in default Windows browser
+  // Allow Firebase/Google OAuth popups; open all other external links in default Windows browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isFirebaseAuthUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 660,
+          autoHideMenuBar: true,
+          title: 'Sign in to Notely',
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        },
+      };
+    }
+
     if (
       url.startsWith('https://') ||
       url.startsWith('http://') ||
@@ -484,7 +585,17 @@ function createMainWindow() {
   if (devUrl) {
     mainWindow.loadURL(devUrl);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    void startLocalAppServer()
+      .then((url) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadURL(url);
+        }
+      })
+      .catch(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+        }
+      });
   }
 }
 
@@ -716,12 +827,24 @@ app.whenReady().then(() => {
   }
 });
 
+app.on('web-contents-created', (_event, contents) => {
+  contents.setUserAgent(CHROME_USER_AGENT);
+});
+
 app.on('before-quit', () => {
   isQuitting = true;
 });
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  if (localAppServer) {
+    try {
+      localAppServer.close();
+    } catch {
+      // Ignore close error on exit
+    }
+    localAppServer = null;
+  }
 });
 
 app.on('window-all-closed', () => {

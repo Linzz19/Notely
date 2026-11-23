@@ -1,6 +1,9 @@
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CloudSyncStatus } from './components/AccountMenu';
 import { BackupModal } from './components/BackupModal';
 import { CategorySidebar } from './components/CategorySidebar';
+import { CloudSyncModal } from './components/CloudSyncModal';
 import { CommandPalette } from './components/CommandPalette';
 import { GuideModal } from './components/GuideModal';
 import { QuickFillModal } from './components/QuickFillModal';
@@ -11,6 +14,7 @@ import { TopTabBar } from './components/TopTabBar';
 import { UpdateBanner } from './components/UpdateBanner';
 import { VersionHistoryModal } from './components/VersionHistoryModal';
 import { createStarterWorkspace } from './data/starterWorkspace';
+import { auth, signInWithGoogle, signOutAccount } from './firebase';
 import {
   AppUpdateState,
   DesktopPreferences,
@@ -29,6 +33,15 @@ import {
   WorkspaceData,
   WorkspaceTab,
 } from './types/workspace';
+import {
+  CloudWorkspaceSnapshot,
+  combineLocalAndCloudWorkspaces,
+  fetchCloudWorkspace,
+  hasCustomLocalContent,
+  mergeSnapshotIntoLocalWorkspace,
+  subscribeToCloudWorkspace,
+  syncWorkspaceDiffToCloud,
+} from './utils/cloudSync';
 import {
   loadDesktopWorkspace,
   loadWorkspace,
@@ -94,7 +107,33 @@ export default function App() {
   const [dismissedUpdateBannerKey, setDismissedUpdateBannerKey] = useState<
     string | null
   >(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [cloudSyncStatus, setCloudSyncStatus] =
+    useState<CloudSyncStatus>('signed-out');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [pendingCloudConflict, setPendingCloudConflict] = useState<{
+    uid: string;
+    cloudSnapshot: CloudWorkspaceSnapshot;
+  } | null>(null);
+
   const desktopHydratedRef = useRef(!isDesktopApp);
+  const desktopHydrationResolveRef = useRef<(() => void) | null>(null);
+  const desktopHydrationPromiseRef = useRef<Promise<void>>(
+    isDesktopApp
+      ? new Promise<void>((resolve) => {
+          desktopHydrationResolveRef.current = resolve;
+        })
+      : Promise.resolve()
+  );
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const cloudReadyRef = useRef(false);
+  const isApplyingRemoteRef = useRef(false);
+  const lastCloudSnapshotRef = useRef<CloudWorkspaceSnapshot | null>(null);
+  const cloudUnsubRef = useRef<(() => void) | null>(null);
+  const syncTimerRef = useRef<number | null>(null);
   const editBurstRef = useRef<{ templateId: string; lastEditAt: number } | null>(
     null
   );
@@ -104,17 +143,22 @@ export default function App() {
     if (!window.fluentDesktop?.isElectron) return;
     let cancelled = false;
 
-    void loadDesktopWorkspace().then((diskData) => {
-      if (cancelled) return;
-      if (diskData) {
-        setWorkspace(diskData);
-        const firstInTab = diskData.templates.find(
-          (t) => t.tabId === diskData.activeTabId
-        );
-        setSelectedTemplateId(firstInTab?.id ?? null);
-      }
-      desktopHydratedRef.current = true;
-    });
+    void loadDesktopWorkspace()
+      .then((diskData) => {
+        if (cancelled) return;
+        if (diskData) {
+          workspaceRef.current = diskData;
+          setWorkspace(diskData);
+          const firstInTab = diskData.templates.find(
+            (t) => t.tabId === diskData.activeTabId
+          );
+          setSelectedTemplateId(firstInTab?.id ?? null);
+        }
+      })
+      .finally(() => {
+        desktopHydratedRef.current = true;
+        desktopHydrationResolveRef.current?.();
+      });
 
     return () => {
       cancelled = true;
@@ -200,6 +244,331 @@ export default function App() {
       }, 2800);
     },
     []
+  );
+
+  const startLiveCloudSubscription = useCallback((uid: string) => {
+    cloudUnsubRef.current?.();
+    cloudUnsubRef.current = subscribeToCloudWorkspace(
+      uid,
+      (remoteSnapshot) => {
+        if (!remoteSnapshot.exists) return;
+        lastCloudSnapshotRef.current = remoteSnapshot;
+        isApplyingRemoteRef.current = true;
+        setWorkspace((prev) =>
+          mergeSnapshotIntoLocalWorkspace(prev, remoteSnapshot)
+        );
+        window.setTimeout(() => {
+          isApplyingRemoteRef.current = false;
+        }, 50);
+        setCloudSyncStatus('synced');
+        setCloudSyncError(null);
+        setLastSyncedAt(new Date().toISOString());
+      },
+      (err) => {
+        setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
+        setCloudSyncError(
+          err.message.includes('Quota exceeded')
+            ? 'Daily Firestore free quota reached. Resets tomorrow.'
+            : 'Unable to sync changes right now.'
+        );
+      }
+    );
+  }, []);
+
+  // Listen to Firebase Auth state and bootstrap cloud sync cleanly
+  useEffect(() => {
+    let cancelled = false;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (cancelled) return;
+      setAuthUser(user);
+      setAuthLoading(false);
+
+      // Tear down previous sync session cleanly
+      cloudUnsubRef.current?.();
+      cloudUnsubRef.current = null;
+      if (syncTimerRef.current) {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      cloudReadyRef.current = false;
+      lastCloudSnapshotRef.current = null;
+      setPendingCloudConflict(null);
+
+      if (!user) {
+        setCloudSyncStatus('signed-out');
+        setCloudSyncError(null);
+        setLastSyncedAt(null);
+        return;
+      }
+
+      setCloudSyncStatus('syncing');
+      setCloudSyncError(null);
+
+      const initCloudForUser = async () => {
+        try {
+          await desktopHydrationPromiseRef.current;
+          if (cancelled) return;
+          const cloudSnapshot = await fetchCloudWorkspace(user.uid);
+          if (cancelled) return;
+
+          if (!cloudSnapshot.exists) {
+            // Brand-new cloud account: upload local workspace automatically
+            const uploaded = await syncWorkspaceDiffToCloud(
+              user.uid,
+              workspaceRef.current,
+              null
+            );
+            if (cancelled) return;
+            lastCloudSnapshotRef.current = uploaded;
+            cloudReadyRef.current = true;
+            setCloudSyncStatus('synced');
+            setLastSyncedAt(new Date().toISOString());
+            startLiveCloudSubscription(user.uid);
+            return;
+          }
+
+          // Existing cloud account: check if local device has unsynced custom templates
+          const localNow = workspaceRef.current;
+          const cloudIds = new Set(cloudSnapshot.templates.map((t) => t.id));
+          const hasLocalOnlyCustom =
+            hasCustomLocalContent(localNow) &&
+            localNow.templates.some((t) => !cloudIds.has(t.id));
+
+          if (hasLocalOnlyCustom && cloudSnapshot.templates.length > 0) {
+            setPendingCloudConflict({ uid: user.uid, cloudSnapshot });
+            setCloudSyncStatus('synced');
+            return;
+          }
+
+          // Apply cloud workspace smoothly and start live sync
+          lastCloudSnapshotRef.current = cloudSnapshot;
+          isApplyingRemoteRef.current = true;
+          setWorkspace((prev) =>
+            mergeSnapshotIntoLocalWorkspace(prev, cloudSnapshot)
+          );
+          window.setTimeout(() => {
+            isApplyingRemoteRef.current = false;
+          }, 50);
+          cloudReadyRef.current = true;
+          setCloudSyncStatus('synced');
+          setLastSyncedAt(new Date().toISOString());
+          startLiveCloudSubscription(user.uid);
+        } catch (err) {
+          if (cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
+          setCloudSyncError(
+            msg.includes('Quota exceeded')
+              ? 'Daily Firestore free quota reached. Resets tomorrow.'
+              : 'Could not reach Firebase Cloud Sync.'
+          );
+        }
+      };
+
+      void initCloudForUser();
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribeAuth();
+      cloudUnsubRef.current?.();
+      if (syncTimerRef.current) {
+        window.clearTimeout(syncTimerRef.current);
+      }
+    };
+  }, [startLiveCloudSubscription]);
+
+  // Debounced minimal-diff push to Firebase whenever local workspace changes
+  useEffect(() => {
+    if (!authUser || !cloudReadyRef.current || isApplyingRemoteRef.current) {
+      return;
+    }
+
+    if (syncTimerRef.current) {
+      window.clearTimeout(syncTimerRef.current);
+    }
+
+    setCloudSyncStatus('syncing');
+    syncTimerRef.current = window.setTimeout(() => {
+      syncTimerRef.current = null;
+      const uid = authUser.uid;
+      void syncWorkspaceDiffToCloud(
+        uid,
+        workspaceRef.current,
+        lastCloudSnapshotRef.current
+      )
+        .then((nextSnapshot) => {
+          lastCloudSnapshotRef.current = nextSnapshot;
+          setCloudSyncStatus('synced');
+          setCloudSyncError(null);
+          setLastSyncedAt(new Date().toISOString());
+        })
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
+          setCloudSyncError(
+            msg.includes('Quota exceeded')
+              ? 'Daily Firestore free quota reached. Resets tomorrow.'
+              : 'Changes saved locally — cloud sync will retry.'
+          );
+        });
+    }, 900);
+
+    return () => {
+      if (syncTimerRef.current) {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+    };
+  }, [authUser, workspace]);
+
+  // Track browser/desktop offline & online transitions for signed-in users
+  useEffect(() => {
+    if (!authUser) return;
+    const handleOffline = () => setCloudSyncStatus('offline');
+    const handleOnline = () => {
+      if (!cloudReadyRef.current) return;
+      setCloudSyncStatus('syncing');
+      void syncWorkspaceDiffToCloud(
+        authUser.uid,
+        workspaceRef.current,
+        lastCloudSnapshotRef.current
+      )
+        .then((nextSnapshot) => {
+          lastCloudSnapshotRef.current = nextSnapshot;
+          setCloudSyncStatus('synced');
+          setCloudSyncError(null);
+          setLastSyncedAt(new Date().toISOString());
+        })
+        .catch(() => {
+          setCloudSyncStatus('error');
+        });
+    };
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [authUser]);
+
+  const handleSignInGoogle = useCallback(async () => {
+    try {
+      setAuthLoading(true);
+      await signInWithGoogle();
+      pushToast('Signed in with Google', 'success', 'Cloud sync is now active.');
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        return;
+      }
+      pushToast(
+        'Google Sign-In failed',
+        'error',
+        'Please allow the sign-in popup and try again.'
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [pushToast]);
+
+  const handleSignOutGoogle = useCallback(async () => {
+    try {
+      await signOutAccount();
+      pushToast('Signed out', 'info', 'Your templates remain saved locally.');
+    } catch {
+      pushToast('Sign-out failed', 'error');
+    }
+  }, [pushToast]);
+
+  const handleManualCloudSync = useCallback(async () => {
+    if (!authUser || !cloudReadyRef.current) return;
+    setCloudSyncStatus('syncing');
+    setCloudSyncError(null);
+    try {
+      const nextSnapshot = await syncWorkspaceDiffToCloud(
+        authUser.uid,
+        workspaceRef.current,
+        lastCloudSnapshotRef.current
+      );
+      lastCloudSnapshotRef.current = nextSnapshot;
+      setCloudSyncStatus('synced');
+      setLastSyncedAt(new Date().toISOString());
+      pushToast('Workspace synced to cloud', 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
+      setCloudSyncError(
+        msg.includes('Quota exceeded')
+          ? 'Daily Firestore free quota reached.'
+          : 'Sync failed. Check your connection and try again.'
+      );
+      pushToast('Cloud sync failed', 'error');
+    }
+  }, [authUser, pushToast]);
+
+  const resolvePendingCloudConflict = useCallback(
+    async (mode: 'merge' | 'cloud' | 'local') => {
+      if (!pendingCloudConflict) return;
+      const { uid, cloudSnapshot } = pendingCloudConflict;
+      setPendingCloudConflict(null);
+      setCloudSyncStatus('syncing');
+
+      try {
+        if (mode === 'cloud') {
+          lastCloudSnapshotRef.current = cloudSnapshot;
+          isApplyingRemoteRef.current = true;
+          setWorkspace((prev) =>
+            mergeSnapshotIntoLocalWorkspace(prev, cloudSnapshot)
+          );
+          window.setTimeout(() => {
+            isApplyingRemoteRef.current = false;
+          }, 50);
+          cloudReadyRef.current = true;
+          setCloudSyncStatus('synced');
+          setLastSyncedAt(new Date().toISOString());
+          startLiveCloudSubscription(uid);
+          pushToast('Loaded cloud workspace', 'success');
+          return;
+        }
+
+        const nextWorkspace =
+          mode === 'merge'
+            ? combineLocalAndCloudWorkspaces(workspaceRef.current, cloudSnapshot)
+            : workspaceRef.current;
+
+        isApplyingRemoteRef.current = true;
+        setWorkspace(nextWorkspace);
+        const synced = await syncWorkspaceDiffToCloud(
+          uid,
+          nextWorkspace,
+          cloudSnapshot
+        );
+        lastCloudSnapshotRef.current = synced;
+        window.setTimeout(() => {
+          isApplyingRemoteRef.current = false;
+        }, 50);
+        cloudReadyRef.current = true;
+        setCloudSyncStatus('synced');
+        setLastSyncedAt(new Date().toISOString());
+        startLiveCloudSubscription(uid);
+        pushToast(
+          mode === 'merge'
+            ? 'Merged local & cloud workspaces'
+            : 'Uploaded local workspace to cloud',
+          'success'
+        );
+      } catch {
+        setCloudSyncStatus('error');
+        setCloudSyncError('Could not complete initial cloud sync.');
+        pushToast('Cloud sync failed', 'error');
+      }
+    },
+    [pendingCloudConflict, startLiveCloudSubscription, pushToast]
   );
 
   // Derived active tab, categories, and templates
@@ -1047,6 +1416,14 @@ export default function App() {
         isDesktopApp={isDesktopApp}
         desktopPrefs={desktopPrefs}
         updateState={updateState}
+        authUser={authUser}
+        authLoading={authLoading}
+        cloudSyncStatus={cloudSyncStatus}
+        lastSyncedAt={lastSyncedAt}
+        cloudSyncError={cloudSyncError}
+        onSignInGoogle={() => void handleSignInGoogle()}
+        onSignOutGoogle={() => void handleSignOutGoogle()}
+        onSyncNow={() => void handleManualCloudSync()}
         onSelectTab={handleSelectTab}
         onCreateTab={handleCreateTab}
         onRenameTab={handleRenameTab}
@@ -1232,6 +1609,22 @@ export default function App() {
           onRestoreVersion={(version) =>
             handleRestoreTemplateVersion(selectedTemplate.id, version)
           }
+        />
+      )}
+
+      {/* First-Time Cloud Sync Conflict Resolution Modal */}
+      {pendingCloudConflict && (
+        <CloudSyncModal
+          userEmail={authUser?.email ?? null}
+          localTemplateCount={workspace.templates.length}
+          cloudTemplateCount={pendingCloudConflict.cloudSnapshot.templates.length}
+          onMerge={() => void resolvePendingCloudConflict('merge')}
+          onUseCloud={() => void resolvePendingCloudConflict('cloud')}
+          onUseLocal={() => void resolvePendingCloudConflict('local')}
+          onCancel={() => {
+            setPendingCloudConflict(null);
+            void handleSignOutGoogle();
+          }}
         />
       )}
 

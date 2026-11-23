@@ -13,12 +13,14 @@ import {
   Settings,
   X,
 } from 'lucide-react';
+import type { User } from 'firebase/auth';
 import {
   AppUpdateState,
   DesktopPreferences,
   DesktopPreferencesPatch,
 } from '../types/electron';
 import { ThemeMode, ThemePreset, WorkspaceTab } from '../types/workspace';
+import { AccountMenu, CloudSyncStatus } from './AccountMenu';
 import { ThemeSettingsPopover } from './ThemeSettingsPopover';
 
 interface TopTabBarProps {
@@ -30,6 +32,14 @@ interface TopTabBarProps {
   isDesktopApp: boolean;
   desktopPrefs: DesktopPreferences;
   updateState: AppUpdateState;
+  authUser: User | null;
+  authLoading: boolean;
+  cloudSyncStatus: CloudSyncStatus;
+  lastSyncedAt: string | null;
+  cloudSyncError: string | null;
+  onSignInGoogle: () => void;
+  onSignOutGoogle: () => void;
+  onSyncNow: () => void;
   onSelectTab: (tabId: string) => void;
   onCreateTab: (name: string) => void;
   onRenameTab: (tabId: string, newName: string) => void;
@@ -78,6 +88,14 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   isDesktopApp,
   desktopPrefs,
   updateState,
+  authUser,
+  authLoading,
+  cloudSyncStatus,
+  lastSyncedAt,
+  cloudSyncError,
+  onSignInGoogle,
+  onSignOutGoogle,
+  onSyncNow,
   onSelectTab,
   onCreateTab,
   onRenameTab,
@@ -342,48 +360,54 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   );
 
   return (
-    <header
-      className={`h-[52px] shrink-0 bg-[var(--surface-frame)] border-b border-[var(--surface-border)] pl-3 sm:pl-4 flex items-center justify-between gap-2 sm:gap-3 select-none ${
-        isWindowsDesktop ? 'app-drag-region pr-[140px]' : 'pr-3 sm:pr-4'
-      }`}
-    >
-      {/* Zone 1: Narrow-window categories toggle + Brand wordmark */}
-      <div className="flex items-center gap-2 shrink-0">
+    <header className="shrink-0 bg-[var(--surface-frame)] border-b border-[var(--surface-border)] select-none flex flex-col">
+      {/* Row 1: Dedicated 34px Window Titlebar (keeps Windows Minimize/Maximize/Close clear of all app controls) */}
+      <div
+        className={`h-[34px] pl-3 sm:pl-4 flex items-center justify-between border-b border-[var(--surface-border)]/50 ${
+          isWindowsDesktop ? 'app-drag-region pr-[144px]' : 'pr-3 sm:pr-4'
+        }`}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-display text-[13px] font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0">
+            Notely
+          </span>
+        </div>
+      </div>
+
+      {/* Row 2: Full-width Interactive Tab Bar & Utility Controls (below Windows caption buttons) */}
+      <div className="app-no-drag h-[44px] px-3 sm:px-4 flex items-center justify-between gap-2 sm:gap-3">
+        {/* Zone 1: Narrow-window categories toggle */}
         <button
           type="button"
           onClick={onToggleMobileSidebar}
           aria-label="Toggle categories and tags"
           title="Categories & Tags"
-          className="app-no-drag lg:hidden p-1.5 rounded-md text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-300 dark:hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="app-no-drag lg:hidden p-1.5 -ml-1 rounded-md text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-300 dark:hover:text-white transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <Menu className="w-4 h-4" />
         </button>
-        <span className="font-display text-[15px] font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0">
-          Notely
-        </span>
-      </div>
 
-      {/* Zone 2: Horizontal Project Tabs + Pinned New Tab Control */}
-      <div className="flex-1 min-w-0 flex items-end h-full gap-1">
-        {canScrollLeft && (
-          <button
-            type="button"
-            onClick={() => scrollTabsBy(-160)}
-            aria-label="Scroll tabs left"
-            title="Scroll tabs left"
-            className="app-no-drag flex items-center justify-center w-6 h-[32px] mb-1 rounded-md text-slate-500 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 shrink-0 transition-colors"
+        {/* Zone 2: Horizontal Project Tabs + Pinned New Tab Control */}
+        <div className="flex-1 min-w-0 flex items-end h-full gap-1">
+          {canScrollLeft && (
+            <button
+              type="button"
+              onClick={() => scrollTabsBy(-160)}
+              aria-label="Scroll tabs left"
+              title="Scroll tabs left"
+              className="app-no-drag flex items-center justify-center w-6 h-[32px] mb-1 rounded-md text-slate-500 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 shrink-0 transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          <nav
+            ref={navScrollRef}
+            aria-label="Project workspace tabs"
+            onScroll={updateScrollButtons}
+            onWheel={handleNavWheel}
+            className="flex-1 min-w-0 flex items-end h-full overflow-x-auto overflow-y-hidden no-scrollbar gap-1 pt-1.5"
           >
-            <ChevronLeft className="w-3.5 h-3.5" />
-          </button>
-        )}
-
-        <nav
-          ref={navScrollRef}
-          aria-label="Project workspace tabs"
-          onScroll={updateScrollButtons}
-          onWheel={handleNavWheel}
-          className="flex-1 min-w-0 flex items-end h-full overflow-x-auto overflow-y-hidden no-scrollbar gap-1 pt-2"
-        >
           {sortedTabs.map((tab, index) => {
             const isActive = tab.id === activeTabId;
             const isEditing = editingTabId === tab.id;
@@ -725,6 +749,19 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
               onClose={() => setIsThemeSettingsOpen(false)}
             />
           )}
+        </div>
+
+        {/* Google Account & Firebase Cloud Sync */}
+        <AccountMenu
+          user={authUser}
+          authLoading={authLoading}
+          syncStatus={cloudSyncStatus}
+          lastSyncedAt={lastSyncedAt}
+          syncError={cloudSyncError}
+          onSignIn={onSignInGoogle}
+          onSignOut={onSignOutGoogle}
+          onSyncNow={onSyncNow}
+        />
         </div>
       </div>
     </header>

@@ -1,0 +1,246 @@
+{
+  "entities": {
+    "UserWorkspaceSettings": {
+      "title": "UserWorkspaceSettings",
+      "description": "Private workspace preferences and sync metadata owned by a single authenticated user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the workspace owner."
+        },
+        "theme": {
+          "type": "string",
+          "enum": ["light", "dark"],
+          "description": "Active color mode."
+        },
+        "themePreset": {
+          "type": "string",
+          "enum": [
+            "default",
+            "warm-paper",
+            "forest-slate",
+            "midnight-indigo",
+            "high-contrast"
+          ],
+          "description": "Selected Fluent surface theme preset."
+        },
+        "accentColor": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 16,
+          "pattern": "^(default|#[0-9A-Fa-f]{6})$",
+          "description": "Either 'default' or a 6-digit hex color code."
+        },
+        "activeTabId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^(|[a-zA-Z0-9_\\-]+)$",
+          "description": "Last active project tab ID."
+        },
+        "sortBy": {
+          "type": "string",
+          "enum": ["updated", "usage", "title"],
+          "description": "Selected template list sort order."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the cloud workspace was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last settings update."
+        }
+      },
+      "required": [
+        "ownerId",
+        "theme",
+        "themePreset",
+        "accentColor",
+        "activeTabId",
+        "sortBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WorkspaceTabDoc": {
+      "title": "WorkspaceTabDoc",
+      "description": "A top-level project workspace tab owned by a single user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Display name of the project tab."
+        },
+        "order": {
+          "type": "number",
+          "description": "Zero-based display sort order."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the tab was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last tab update."
+        }
+      },
+      "required": ["ownerId", "name", "order", "createdAt", "updatedAt"]
+    },
+    "TemplateCategoryDoc": {
+      "title": "TemplateCategoryDoc",
+      "description": "A category inside a project tab owned by a single user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "tabId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent project tab ID."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Category display name."
+        },
+        "order": {
+          "type": "number",
+          "description": "Zero-based display sort order."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the category was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last category update."
+        }
+      },
+      "required": [
+        "ownerId",
+        "tabId",
+        "name",
+        "order",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SnippetTemplateDoc": {
+      "title": "SnippetTemplateDoc",
+      "description": "A reusable text/Markdown template owned by a single user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "tabId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent project tab ID."
+        },
+        "categoryId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^(|[a-zA-Z0-9_\\-]+)$",
+          "description": "Single assigned category ID or empty string if unassigned."
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Template title."
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 50000,
+          "description": "Template Markdown body."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Bounded list of up to 15 searchable tag strings."
+        },
+        "usageCount": {
+          "type": "number",
+          "description": "Number of times this template has been copied."
+        },
+        "lastCopiedAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO timestamp of last copy or empty string."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the template was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last template update."
+        }
+      },
+      "required": [
+        "ownerId",
+        "tabId",
+        "categoryId",
+        "title",
+        "content",
+        "tags",
+        "usageCount",
+        "lastCopiedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserWorkspaceSettings" },
+      "description": "Owner-only private workspace settings and sync metadata for a signed-in Notely user."
+    },
+    "/users/{userId}/tabs/{tabId}": {
+      "schema": { "$ref": "#/entities/WorkspaceTabDoc" },
+      "description": "Project workspace tabs belonging exclusively to userId."
+    },
+    "/users/{userId}/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/TemplateCategoryDoc" },
+      "description": "Template categories belonging exclusively to userId."
+    },
+    "/users/{userId}/templates/{templateId}": {
+      "schema": { "$ref": "#/entities/SnippetTemplateDoc" },
+      "description": "Reusable text templates belonging exclusively to userId."
+    }
+  }
+}

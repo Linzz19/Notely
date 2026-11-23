@@ -1,0 +1,275 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // Global Hardened Primitives
+    // ---------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidOptionalId(id) {
+      return id is string && id.size() <= 128 && (id.size() == 0 || id.matches('^[a-zA-Z0-9_\\-]+$'));
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function parentUserExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    function parentUserExistsOrCreated(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) ||
+             existsAfter(/databases/$(database)/documents/users/$(userId));
+    }
+
+    // Pillar 5: Bounded array validation with element type guard
+    function isValidTagList(tags) {
+      return tags is list &&
+             tags.size() <= 15 &&
+             (tags.size() == 0 || (tags[0] is string && tags[0].size() >= 1 && tags[0].size() <= 32));
+    }
+
+    // ---------------------------------------------------------
+    // Validation Blueprints (Pillar 2 - Anti-Update-Gap)
+    // ---------------------------------------------------------
+    function isValidUserSettings(data, userId) {
+      return data.ownerId is string &&
+             data.ownerId.size() >= 1 &&
+             data.ownerId.size() <= 128 &&
+             data.ownerId == userId &&
+             data.ownerId == request.auth.uid &&
+             data.theme is string &&
+             data.theme.size() <= 16 &&
+             data.theme in ['light', 'dark'] &&
+             data.themePreset is string &&
+             data.themePreset.size() <= 32 &&
+             data.themePreset in ['default', 'warm-paper', 'forest-slate', 'midnight-indigo', 'high-contrast'] &&
+             data.accentColor is string &&
+             data.accentColor.size() >= 7 &&
+             data.accentColor.size() <= 16 &&
+             data.accentColor.matches('^(default|#[0-9A-Fa-f]{6})$') &&
+             isValidOptionalId(data.activeTabId) &&
+             data.sortBy is string &&
+             data.sortBy.size() <= 16 &&
+             data.sortBy in ['updated', 'usage', 'title'] &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidTab(data, userId) {
+      return data.ownerId is string &&
+             data.ownerId.size() >= 1 &&
+             data.ownerId.size() <= 128 &&
+             data.ownerId == userId &&
+             data.ownerId == request.auth.uid &&
+             data.name is string &&
+             data.name.size() >= 1 &&
+             data.name.size() <= 64 &&
+             data.order is number &&
+             data.order >= 0 &&
+             data.order <= 1000 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data, userId) {
+      return data.ownerId is string &&
+             data.ownerId.size() >= 1 &&
+             data.ownerId.size() <= 128 &&
+             data.ownerId == userId &&
+             data.ownerId == request.auth.uid &&
+             isValidId(data.tabId) &&
+             data.name is string &&
+             data.name.size() >= 1 &&
+             data.name.size() <= 64 &&
+             data.order is number &&
+             data.order >= 0 &&
+             data.order <= 1000 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidTemplate(data, userId) {
+      return data.ownerId is string &&
+             data.ownerId.size() >= 1 &&
+             data.ownerId.size() <= 128 &&
+             data.ownerId == userId &&
+             data.ownerId == request.auth.uid &&
+             isValidId(data.tabId) &&
+             isValidOptionalId(data.categoryId) &&
+             data.title is string &&
+             data.title.size() <= 160 &&
+             data.content is string &&
+             data.content.size() <= 50000 &&
+             isValidTagList(data.tags) &&
+             data.usageCount is number &&
+             data.usageCount >= 0 &&
+             data.usageCount <= 1000000 &&
+             data.lastCopiedAt is string &&
+             data.lastCopiedAt.size() <= 40 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    // ---------------------------------------------------------
+    // Collection: /users/{userId} (Workspace Settings & Root)
+    // ---------------------------------------------------------
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+                       isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().keys().hasAll(['ownerId', 'theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['ownerId', 'theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'createdAt', 'updatedAt']) &&
+                       isValidUserSettings(incoming(), userId) &&
+                       incoming().createdAt == request.time &&
+                       incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+                       isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserSettings(incoming(), userId) &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt == request.time && (
+                         // Action: Update appearance or workspace preferences
+                         incoming().diff(existing()).affectedKeys().hasOnly(['theme', 'themePreset', 'accentColor', 'activeTabId', 'sortBy', 'updatedAt'])
+                       );
+
+      allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId);
+
+      // ---------------------------------------------------------
+      // Subcollection: /users/{userId}/tabs/{tabId}
+      // ---------------------------------------------------------
+      match /tabs/{tabId} {
+        allow get: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(tabId) && parentUserExists(userId);
+        allow list: if isVerifiedUser() && isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+                         isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(tabId) &&
+                         incoming().keys().hasAll(['ownerId', 'name', 'order', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['ownerId', 'name', 'order', 'createdAt', 'updatedAt']) &&
+                         isValidTab(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         parentUserExistsOrCreated(userId);
+
+        allow update: if isVerifiedUser() &&
+                         isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(tabId) &&
+                         isValidTab(incoming(), userId) &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt == request.time && (
+                           // Action: Rename or reorder tab
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'order', 'updatedAt'])
+                         ) &&
+                         parentUserExists(userId);
+
+        allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(tabId) && parentUserExists(userId);
+      }
+
+      // ---------------------------------------------------------
+      // Subcollection: /users/{userId}/categories/{categoryId}
+      // ---------------------------------------------------------
+      match /categories/{categoryId} {
+        allow get: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(categoryId) && parentUserExists(userId);
+        allow list: if isVerifiedUser() && isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+                         isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(categoryId) &&
+                         incoming().keys().hasAll(['ownerId', 'tabId', 'name', 'order', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['ownerId', 'tabId', 'name', 'order', 'createdAt', 'updatedAt']) &&
+                         isValidCategory(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         parentUserExistsOrCreated(userId);
+
+        allow update: if isVerifiedUser() &&
+                         isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(categoryId) &&
+                         isValidCategory(incoming(), userId) &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt == request.time && (
+                           // Action: Rename, reorder, or move category
+                           incoming().diff(existing()).affectedKeys().hasOnly(['tabId', 'name', 'order', 'updatedAt'])
+                         ) &&
+                         parentUserExists(userId);
+
+        allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(categoryId) && parentUserExists(userId);
+      }
+
+      // ---------------------------------------------------------
+      // Subcollection: /users/{userId}/templates/{templateId}
+      // ---------------------------------------------------------
+      match /templates/{templateId} {
+        allow get: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(templateId) && parentUserExists(userId);
+        allow list: if isVerifiedUser() && isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+                         isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(templateId) &&
+                         incoming().keys().hasAll(['ownerId', 'tabId', 'categoryId', 'title', 'content', 'tags', 'usageCount', 'lastCopiedAt', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['ownerId', 'tabId', 'categoryId', 'title', 'content', 'tags', 'usageCount', 'lastCopiedAt', 'createdAt', 'updatedAt']) &&
+                         isValidTemplate(incoming(), userId) &&
+                         incoming().createdAt == request.time &&
+                         incoming().updatedAt == request.time &&
+                         parentUserExistsOrCreated(userId);
+
+        allow update: if isVerifiedUser() &&
+                         isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(templateId) &&
+                         isValidTemplate(incoming(), userId) &&
+                         incoming().ownerId == existing().ownerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt == request.time && (
+                           // Action: Edit template content, metadata, category, or tab
+                           incoming().diff(existing()).affectedKeys().hasOnly(['tabId', 'categoryId', 'title', 'content', 'tags', 'updatedAt']) ||
+                           // Action: Record clipboard copy usage increment
+                           incoming().diff(existing()).affectedKeys().hasOnly(['usageCount', 'lastCopiedAt', 'updatedAt']) ||
+                           // Action: Full template sync update (e.g., backup import/merge)
+                           incoming().diff(existing()).affectedKeys().hasOnly(['tabId', 'categoryId', 'title', 'content', 'tags', 'usageCount', 'lastCopiedAt', 'updatedAt'])
+                         ) &&
+                         parentUserExists(userId);
+
+        allow delete: if isVerifiedUser() && isOwner(userId) && isValidId(userId) && isValidId(templateId) && parentUserExists(userId);
+      }
+    }
+  }
+}
