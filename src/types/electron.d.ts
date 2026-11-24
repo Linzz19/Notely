@@ -55,10 +55,20 @@ export interface AppUpdateState {
   isPortable: boolean;
 }
 
+export type DesktopSignInMode = 'browser' | 'window';
+
+export interface DesktopGoogleAuthRequest {
+  authDomain: string;
+  mode?: DesktopSignInMode;
+  webAuthUrl?: string;
+}
+
 export interface DesktopGoogleAuthResult {
   ok: boolean;
   idToken?: string | null;
   accessToken?: string | null;
+  usedMode?: DesktopSignInMode;
+  fellBackToWindow?: boolean;
   code?: string;
   message?: string;
 }
@@ -95,7 +105,10 @@ export interface FluentDesktopBridge {
     jsonString: string
   ) => Promise<DesktopExportResult>;
   importBackupDialog: () => Promise<DesktopImportResult>;
-  signInWithGoogle?: (authDomain: string) => Promise<DesktopGoogleAuthResult>;
+  signInWithGoogle?: (
+    request: string | DesktopGoogleAuthRequest
+  ) => Promise<DesktopGoogleAuthResult>;
+  cancelGoogleSignIn?: () => Promise<void>;
   onOpenQuickJump: (callback: () => void) => () => void;
 }
 

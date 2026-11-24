@@ -18,6 +18,7 @@ import {
   AppUpdateState,
   DesktopPreferences,
   DesktopPreferencesPatch,
+  DesktopSignInMode,
 } from '../types/electron';
 import { ThemeMode, ThemePreset, WorkspaceTab } from '../types/workspace';
 import { AccountMenu, CloudSyncStatus } from './AccountMenu';
@@ -34,12 +35,14 @@ interface TopTabBarProps {
   updateState: AppUpdateState;
   authUser: User | null;
   authLoading: boolean;
+  authPendingMode: DesktopSignInMode | null;
   cloudSyncStatus: CloudSyncStatus;
   lastSyncedAt: string | null;
   cloudSyncError: string | null;
   encryptionEnabled: boolean;
   encryptionUnlocked: boolean;
-  onSignInGoogle: () => void;
+  onSignInGoogle: (mode?: DesktopSignInMode) => void;
+  onCancelSignInGoogle: () => void;
   onSignOutGoogle: () => void;
   onSyncNow: () => void;
   onOpenVaultSetup: () => void;
@@ -95,12 +98,14 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   updateState,
   authUser,
   authLoading,
+  authPendingMode,
   cloudSyncStatus,
   lastSyncedAt,
   cloudSyncError,
   encryptionEnabled,
   encryptionUnlocked,
   onSignInGoogle,
+  onCancelSignInGoogle,
   onSignOutGoogle,
   onSyncNow,
   onOpenVaultSetup,
@@ -778,12 +783,15 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         <AccountMenu
           user={authUser}
           authLoading={authLoading}
+          authPendingMode={authPendingMode}
+          isDesktopApp={isDesktopApp}
           syncStatus={cloudSyncStatus}
           lastSyncedAt={lastSyncedAt}
           syncError={cloudSyncError}
           encryptionEnabled={encryptionEnabled}
           encryptionUnlocked={encryptionUnlocked}
           onSignIn={onSignInGoogle}
+          onCancelSignIn={onCancelSignInGoogle}
           onSignOut={onSignOutGoogle}
           onSyncNow={onSyncNow}
           onOpenVaultSetup={onOpenVaultSetup}

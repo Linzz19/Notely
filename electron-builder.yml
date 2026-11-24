@@ -2,6 +2,10 @@ appId: com.notely.desktop
 productName: Notely
 copyright: Copyright (c) Notely
 compression: normal
+protocols:
+  - name: Notely Desktop
+    schemes:
+      - notely
 directories:
   output: release
 npmRebuild: false

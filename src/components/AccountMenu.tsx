@@ -1,8 +1,10 @@
 import {
   AlertCircle,
+  AppWindow,
   CheckCircle2,
   Cloud,
   CloudOff,
+  ExternalLink,
   KeyRound,
   Lock,
   LogIn,
@@ -14,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
+import type { DesktopSignInMode } from '../types/electron';
 
 export type CloudSyncStatus =
   | 'signed-out'
@@ -26,12 +29,15 @@ export type CloudSyncStatus =
 interface AccountMenuProps {
   user: User | null;
   authLoading: boolean;
+  authPendingMode: DesktopSignInMode | null;
+  isDesktopApp: boolean;
   syncStatus: CloudSyncStatus;
   lastSyncedAt: string | null;
   syncError: string | null;
   encryptionEnabled: boolean;
   encryptionUnlocked: boolean;
-  onSignIn: () => void;
+  onSignIn: (mode?: DesktopSignInMode) => void;
+  onCancelSignIn: () => void;
   onSignOut: () => void;
   onSyncNow: () => void;
   onOpenVaultSetup: () => void;
@@ -51,12 +57,15 @@ function getInitials(user: User): string {
 export function AccountMenu({
   user,
   authLoading,
+  authPendingMode,
+  isDesktopApp,
   syncStatus,
   lastSyncedAt,
   syncError,
   encryptionEnabled,
   encryptionUnlocked,
   onSignIn,
+  onCancelSignIn,
   onSignOut,
   onSyncNow,
   onOpenVaultSetup,
@@ -66,10 +75,19 @@ export function AccountMenu({
   const [isOpen, setIsOpen] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const prevUserUidRef = useRef<string | null>(user?.uid ?? null);
 
   useEffect(() => {
     setImgFailed(false);
   }, [user?.photoURL]);
+
+  useEffect(() => {
+    const nextUid = user?.uid ?? null;
+    if (!prevUserUidRef.current && nextUid) {
+      setIsOpen(false);
+    }
+    prevUserUidRef.current = nextUid;
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -146,20 +164,29 @@ export function AccountMenu({
         <button
           type="button"
           data-account-menu-trigger="true"
-          disabled={authLoading}
           onClick={() => setIsOpen((v) => !v)}
           aria-label="Sign in with Google for Cloud Sync"
           aria-haspopup="dialog"
           aria-expanded={isOpen}
-          title="Sign in with Google to auto-sync templates & settings"
+          title={
+            authPendingMode === 'browser'
+              ? 'Waiting for Google Sign-In in your browser...'
+              : 'Sign in with Google to auto-sync templates & settings'
+          }
           className={`app-no-drag flex items-center gap-1.5 h-8 px-2 xl:px-2.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
-            isOpen
+            isOpen || authPendingMode === 'browser'
               ? 'bg-[var(--accent-soft)] border-[var(--accent)] text-[var(--accent)]'
               : 'bg-[var(--surface-panel)] border-[var(--surface-border)] text-slate-700 dark:text-slate-200 hover:border-[var(--surface-border-strong)] hover:text-slate-950 dark:hover:text-white'
           }`}
         >
-          <Cloud className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
-          <span className="hidden lg:inline">Sign In</span>
+          {authLoading ? (
+            <RefreshCw className="w-3.5 h-3.5 text-[var(--accent)] animate-spin shrink-0" />
+          ) : (
+            <Cloud className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+          )}
+          <span className="hidden lg:inline">
+            {authPendingMode === 'browser' ? 'Waiting...' : 'Sign In'}
+          </span>
         </button>
       )}
 
@@ -364,26 +391,94 @@ export function AccountMenu({
             </div>
           ) : (
             <div className="p-3.5 space-y-3">
-              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                Sign in with your Google account to automatically sync all tabs, categories, templates, and theme settings across your devices.
-              </p>
+              {isDesktopApp && authPendingMode === 'browser' ? (
+                <div className="space-y-2.5">
+                  <div className="p-2.5 rounded-lg bg-[var(--surface-subtle)] border border-[var(--surface-border)] flex items-start gap-2.5">
+                    <RefreshCw className="w-4 h-4 text-[var(--accent)] animate-spin shrink-0 mt-0.5" />
+                    <div className="min-w-0 text-xs leading-snug">
+                      <p className="font-semibold text-slate-900 dark:text-slate-100">
+                        Waiting for browser sign-in...
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        Finish picking your Google account in your browser to return to Notely automatically.
+                      </p>
+                    </div>
+                  </div>
 
-              <button
-                type="button"
-                disabled={authLoading}
-                onClick={() => {
-                  setIsOpen(false);
-                  onSignIn();
-                }}
-                className="w-full h-9 px-3 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>Continue with Google</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsOpen(false);
+                      onSignIn('window');
+                    }}
+                    className="w-full h-8 px-3 rounded-md border border-[var(--surface-border)] hover:bg-[var(--surface-hover)] text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <AppWindow className="w-3.5 h-3.5 shrink-0" />
+                    <span>Switch to built-in sign-in window</span>
+                  </button>
 
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                Protected by Google Sign-In, per-user Firebase rules, and optional AES-256-GCM end-to-end encryption.
-              </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onCancelSignIn();
+                      setIsOpen(false);
+                    }}
+                    className="w-full h-7 px-3 rounded-md text-[11.5px] font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-[var(--surface-hover)] transition-colors"
+                  >
+                    Cancel sign-in
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    Sign in with your Google account to automatically sync all tabs, categories, templates, and theme settings across your devices.
+                  </p>
+
+                  {isDesktopApp ? (
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        disabled={authLoading}
+                        onClick={() => onSignIn('browser')}
+                        className="w-full h-9 px-3 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                        <span>Continue in Browser (Google)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={authLoading}
+                        onClick={() => {
+                          setIsOpen(false);
+                          onSignIn('window');
+                        }}
+                        className="w-full h-8 px-3 rounded-md text-[11.5px] font-medium text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white hover:bg-[var(--surface-hover)] inline-flex items-center justify-center gap-1.5 transition-colors disabled:opacity-60"
+                      >
+                        <AppWindow className="w-3.5 h-3.5 shrink-0" />
+                        <span>Use built-in sign-in window</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={() => {
+                        setIsOpen(false);
+                        onSignIn();
+                      }}
+                      className="w-full h-9 px-3 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      <span>Continue with Google</span>
+                    </button>
+                  )}
+
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                    Protected by Google Sign-In, per-user Firebase rules, and optional AES-256-GCM end-to-end encryption.
+                  </p>
+                </>
+              )}
             </div>
           )}
         </div>

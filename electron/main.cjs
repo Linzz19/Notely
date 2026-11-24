@@ -7,11 +7,13 @@ const {
   ipcMain,
   Menu,
   nativeImage,
+  net,
   safeStorage,
   session,
   shell,
   Tray,
 } = require('electron');
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -43,16 +45,22 @@ const MIME_TYPES = {
   '.ttf': 'font/ttf',
 };
 
-const AUTH_BRIDGE_PARTITION = 'notely-auth-bridge';
+const AUTH_BRIDGE_PARTITION = 'persist:notely-auth-bridge';
 const AUTH_BRIDGE_PATH = '/__notely_auth_bridge__';
 const AUTH_DOMAIN_REGEX =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(firebaseapp\.com|web\.app)$/i;
+const DEFAULT_WEB_AUTH_URL =
+  'https://ais-pre-hk54y74c2flsdo7nhoqcri-470217181044.asia-east1.run.app';
 const MAX_OAUTH_TOKEN_LENGTH = 16384;
+const MAX_AUTH_CALLBACK_BYTES = 32 * 1024;
+const AUTH_CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+const WEB_AUTH_PROBE_TIMEOUT_MS = 2500;
 
 let localAppServer = null;
 let localAppUrl = null;
 let activeAuthOrigin = null;
 let activeAuthWindow = null;
+let activeBrowserAuthSession = null;
 
 function isFirebaseAuthUrl(rawUrl) {
   // Firebase signInWithPopup opens an empty / about:blank window synchronously
@@ -239,6 +247,297 @@ function isBridgePageUrl(rawUrl, expectedOrigin) {
   }
 }
 
+function isPrivateOrLocalHostname(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.local') ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}
+
+function validateWebAuthUrl(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return null;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.protocol !== 'https:') return null;
+    if (isPrivateOrLocalHostname(parsed.hostname)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function probeWebAuthUrl(urlString) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), WEB_AUTH_PROBE_TIMEOUT_MS);
+  try {
+    const response = await net.fetch(urlString, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    return (
+      (response.status >= 200 && response.status < 400) ||
+      response.status === 405
+    );
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function cancelActiveBrowserAuth(
+  code = 'auth/popup-closed-by-user',
+  message = 'Browser sign-in was canceled.'
+) {
+  if (!activeBrowserAuthSession) return;
+  const sessionToCancel = activeBrowserAuthSession;
+  activeBrowserAuthSession = null;
+  sessionToCancel.cancel(code, message);
+}
+
+function timingSafeMatch(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Opens Notely's hosted web relay page in the user's default system browser
+ * (Chrome/Edge, where they are already signed into Google) and receives the
+ * Google OAuth credential via a short-lived, state-protected 127.0.0.1 POST callback.
+ */
+function runSystemBrowserGoogleSignIn(parsedWebUrl) {
+  cancelActiveBrowserAuth(
+    'auth/cancelled-popup-request',
+    'Replaced by a new sign-in request.'
+  );
+
+  const expectedOrigin = parsedWebUrl.origin;
+  const expectedState = crypto.randomBytes(32).toString('hex');
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let boundPort = 0;
+    let timeoutHandle = null;
+
+    const cleanupAndResolve = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      if (activeBrowserAuthSession && activeBrowserAuthSession.state === expectedState) {
+        activeBrowserAuthSession = null;
+      }
+      try {
+        callbackServer.close();
+      } catch {
+        // Ignore close error
+      }
+      resolve(result);
+    };
+
+    const callbackServer = http.createServer((req, res) => {
+      const hostHeader = String(req.headers.host || '').toLowerCase();
+      if (hostHeader !== `127.0.0.1:${boundPort}`) {
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: false }));
+        return;
+      }
+
+      const requestOrigin = String(req.headers.origin || '');
+      if (requestOrigin !== expectedOrigin) {
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: false }));
+        return;
+      }
+
+      const reqPath = (req.url || '').split('?')[0];
+      if (reqPath !== '/auth/callback') {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: false }));
+        return;
+      }
+
+      const corsHeaders = {
+        'Access-Control-Allow-Origin': expectedOrigin,
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Private-Network': 'true',
+        Vary: 'Origin',
+      };
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, corsHeaders);
+        res.end();
+        return;
+      }
+
+      if (req.method !== 'POST') {
+        res.writeHead(405, {
+          ...corsHeaders,
+          'Content-Type': 'application/json; charset=utf-8',
+        });
+        res.end(JSON.stringify({ ok: false }));
+        return;
+      }
+
+      let rawBody = '';
+      let byteLength = 0;
+      let aborted = false;
+
+      req.on('data', (chunk) => {
+        if (aborted) return;
+        byteLength += chunk.length;
+        if (byteLength > MAX_AUTH_CALLBACK_BYTES) {
+          aborted = true;
+          res.writeHead(413, {
+            ...corsHeaders,
+            'Content-Type': 'application/json; charset=utf-8',
+          });
+          res.end(JSON.stringify({ ok: false }));
+          req.destroy();
+          return;
+        }
+        rawBody += chunk.toString('utf8');
+      });
+
+      req.on('end', () => {
+        if (aborted || settled) return;
+        let payload;
+        try {
+          payload = JSON.parse(rawBody);
+        } catch {
+          res.writeHead(400, {
+            ...corsHeaders,
+            'Content-Type': 'application/json; charset=utf-8',
+          });
+          res.end(JSON.stringify({ ok: false }));
+          return;
+        }
+
+        if (!payload || !timingSafeMatch(payload.state, expectedState)) {
+          res.writeHead(403, {
+            ...corsHeaders,
+            'Content-Type': 'application/json; charset=utf-8',
+          });
+          res.end(JSON.stringify({ ok: false }));
+          return;
+        }
+
+        const idToken =
+          typeof payload.idToken === 'string' &&
+          payload.idToken.length > 0 &&
+          payload.idToken.length <= MAX_OAUTH_TOKEN_LENGTH
+            ? payload.idToken
+            : null;
+        const accessToken =
+          typeof payload.accessToken === 'string' &&
+          payload.accessToken.length > 0 &&
+          payload.accessToken.length <= MAX_OAUTH_TOKEN_LENGTH
+            ? payload.accessToken
+            : null;
+
+        if (!idToken && !accessToken) {
+          res.writeHead(400, {
+            ...corsHeaders,
+            'Content-Type': 'application/json; charset=utf-8',
+          });
+          res.end(JSON.stringify({ ok: false }));
+          return;
+        }
+
+        res.writeHead(200, {
+          ...corsHeaders,
+          'Content-Type': 'application/json; charset=utf-8',
+        });
+        res.end(JSON.stringify({ ok: true }));
+
+        // Automatically bring Notely back to the foreground after browser login
+        showAndFocusWindow(false);
+
+        cleanupAndResolve({
+          ok: true,
+          idToken,
+          accessToken,
+          usedMode: 'browser',
+        });
+      });
+    });
+
+    activeBrowserAuthSession = {
+      state: expectedState,
+      cancel: (code, message) => {
+        cleanupAndResolve({
+          ok: false,
+          code,
+          message,
+          usedMode: 'browser',
+        });
+      },
+    };
+
+    callbackServer.once('error', () => {
+      cleanupAndResolve({
+        ok: false,
+        code: 'auth/internal-error',
+        message: 'Could not start local sign-in callback listener.',
+        usedMode: 'browser',
+      });
+    });
+
+    callbackServer.listen(0, '127.0.0.1', () => {
+      const address = callbackServer.address();
+      boundPort = typeof address === 'object' && address ? address.port : 0;
+      if (!boundPort) {
+        cleanupAndResolve({
+          ok: false,
+          code: 'auth/internal-error',
+          message: 'Could not bind local sign-in callback port.',
+          usedMode: 'browser',
+        });
+        return;
+      }
+
+      const launchUrl = new URL(parsedWebUrl.toString());
+      launchUrl.searchParams.set('desktop_auth', '1');
+      launchUrl.searchParams.set('callback_port', String(boundPort));
+      launchUrl.searchParams.set('state', expectedState);
+
+      timeoutHandle = setTimeout(() => {
+        cleanupAndResolve({
+          ok: false,
+          code: 'auth/timeout',
+          message: 'Browser sign-in timed out.',
+          usedMode: 'browser',
+        });
+      }, AUTH_CALLBACK_TIMEOUT_MS);
+
+      void shell.openExternal(launchUrl.toString()).catch(() => {
+        cleanupAndResolve({
+          ok: false,
+          code: 'auth/internal-error',
+          message: 'Could not open your default web browser.',
+          usedMode: 'browser',
+        });
+      });
+    });
+  });
+}
+
 /**
  * Runs Google Sign-In inside an isolated BrowserWindow hosted on Firebase's
  * own always-authorized authDomain (https://<project>.firebaseapp.com), using
@@ -246,7 +545,7 @@ function isBridgePageUrl(rawUrl, expectedOrigin) {
  * OAuth completes, the bridge extracts the Google OAuth tokens and returns them
  * to the main window to call signInWithCredential().
  */
-async function runDesktopGoogleSignIn(rawAuthDomain) {
+async function runBuiltInWindowGoogleSignIn(rawAuthDomain, fellBackToWindow = false) {
   const authDomain = typeof rawAuthDomain === 'string' ? rawAuthDomain.trim().toLowerCase() : '';
   if (!AUTH_DOMAIN_REGEX.test(authDomain)) {
     return {
@@ -379,6 +678,8 @@ async function runDesktopGoogleSignIn(rawAuthDomain) {
         ok: true,
         idToken,
         accessToken,
+        usedMode: 'window',
+        fellBackToWindow,
       });
     };
 
@@ -508,6 +809,46 @@ async function runDesktopGoogleSignIn(rawAuthDomain) {
       });
     });
   });
+}
+
+async function runDesktopGoogleSignIn(requestOrDomain) {
+  const authDomain =
+    typeof requestOrDomain === 'string'
+      ? requestOrDomain
+      : requestOrDomain && typeof requestOrDomain.authDomain === 'string'
+        ? requestOrDomain.authDomain
+        : '';
+  const requestedMode =
+    requestOrDomain &&
+    typeof requestOrDomain === 'object' &&
+    requestOrDomain.mode === 'window'
+      ? 'window'
+      : 'browser';
+  const rawWebUrl =
+    process.env.NOTELY_WEB_AUTH_URL ||
+    (requestOrDomain && typeof requestOrDomain.webAuthUrl === 'string'
+      ? requestOrDomain.webAuthUrl
+      : '') ||
+    DEFAULT_WEB_AUTH_URL;
+
+  if (requestedMode === 'window') {
+    cancelActiveBrowserAuth(
+      'auth/cancelled-popup-request',
+      'Switched to built-in sign-in window.'
+    );
+    return runBuiltInWindowGoogleSignIn(authDomain, false);
+  }
+
+  const parsedWebUrl = validateWebAuthUrl(rawWebUrl);
+  if (parsedWebUrl) {
+    const isReachable = await probeWebAuthUrl(parsedWebUrl.toString());
+    if (isReachable) {
+      return runSystemBrowserGoogleSignIn(parsedWebUrl);
+    }
+  }
+
+  // Automatic fallback to persistent built-in window if hosted web relay is unavailable
+  return runBuiltInWindowGoogleSignIn(authDomain, true);
 }
 
 // Prevent multiple instances of Notely.exe
@@ -1295,17 +1636,36 @@ function registerIpcHandlers() {
     return { canceled: false, filePath, content };
   });
 
-  ipcMain.handle('auth:googleSignIn', (_event, authDomain) =>
-    runDesktopGoogleSignIn(authDomain)
+  ipcMain.handle('auth:googleSignIn', (_event, requestOrDomain) =>
+    runDesktopGoogleSignIn(requestOrDomain)
   );
+
+  ipcMain.handle('auth:cancelGoogleSignIn', () => {
+    cancelActiveBrowserAuth(
+      'auth/popup-closed-by-user',
+      'Browser sign-in was canceled.'
+    );
+  });
 }
 
 app.on('second-instance', () => {
   showAndFocusWindow(false);
 });
 
+app.on('open-url', (event) => {
+  event.preventDefault();
+  showAndFocusWindow(false);
+});
+
 app.whenReady().then(() => {
   app.setAppUserModelId('com.notely.desktop');
+  if (app.isPackaged) {
+    try {
+      app.setAsDefaultProtocolClient('notely');
+    } catch {
+      // Non-fatal if OS protocol registration is restricted
+    }
+  }
   Menu.setApplicationMenu(null);
   loadDesktopPrefs();
   setupAutoUpdater();
@@ -1348,6 +1708,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  cancelActiveBrowserAuth('auth/popup-closed-by-user', 'Application quitting.');
   if (activeAuthWindow && !activeAuthWindow.isDestroyed()) {
     try {
       activeAuthWindow.close();

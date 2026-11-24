@@ -68,15 +68,30 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-export async function signInWithGoogle() {
+const DEFAULT_DESKTOP_WEB_AUTH_URL =
+  'https://ais-pre-hk54y74c2flsdo7nhoqcri-470217181044.asia-east1.run.app';
+
+export function getDesktopWebAuthUrl(): string {
+  const envUrl =
+    typeof import.meta.env?.VITE_DESKTOP_AUTH_WEB_URL === 'string'
+      ? import.meta.env.VITE_DESKTOP_AUTH_WEB_URL.trim()
+      : '';
+  return envUrl || DEFAULT_DESKTOP_WEB_AUTH_URL;
+}
+
+export async function signInWithGoogle(options?: {
+  mode?: 'browser' | 'window';
+}) {
   if (
     typeof window !== 'undefined' &&
     window.fluentDesktop?.isElectron &&
     window.fluentDesktop?.signInWithGoogle
   ) {
-    const bridgeResult = await window.fluentDesktop.signInWithGoogle(
-      firebaseConfig.authDomain
-    );
+    const bridgeResult = await window.fluentDesktop.signInWithGoogle({
+      authDomain: firebaseConfig.authDomain,
+      mode: options?.mode || 'browser',
+      webAuthUrl: getDesktopWebAuthUrl(),
+    });
     if (!bridgeResult.ok) {
       const error = new Error(
         bridgeResult.message || 'Google Sign-In did not complete.'
@@ -95,17 +110,28 @@ export async function signInWithGoogle() {
   return signInWithPopup(auth, googleProvider);
 }
 
+export async function cancelDesktopGoogleSignIn() {
+  if (
+    typeof window !== 'undefined' &&
+    window.fluentDesktop?.isElectron &&
+    window.fluentDesktop?.cancelGoogleSignIn
+  ) {
+    await window.fluentDesktop.cancelGoogleSignIn();
+  }
+}
+
 export async function signOutAccount() {
   return firebaseSignOut(auth);
 }
 
-const isDesktopAuthBridgeWindow =
+const isStandaloneAuthWindow =
   typeof window !== 'undefined' &&
   (window.location.pathname === '/__notely_auth_bridge__' ||
-    new URLSearchParams(window.location.search).get('notely_auth_bridge') === '1');
+    new URLSearchParams(window.location.search).get('notely_auth_bridge') === '1' ||
+    new URLSearchParams(window.location.search).get('desktop_auth') === '1');
 
 async function testConnection() {
-  if (isDesktopAuthBridgeWindow) return;
+  if (isStandaloneAuthWindow) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {

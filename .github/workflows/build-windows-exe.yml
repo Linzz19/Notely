@@ -68,6 +68,7 @@ jobs:
       - name: Build UI bundle
         env:
           VITE_APP_VERSION: ${{ env.APP_VERSION }}
+          VITE_DESKTOP_AUTH_WEB_URL: ${{ vars.DESKTOP_AUTH_WEB_URL }}
         run: npm run build
 
       - name: Build & Publish Windows Release (NSIS + Portable)
