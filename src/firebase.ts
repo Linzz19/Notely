@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
+  signInWithCredential,
   signInWithPopup,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
@@ -68,6 +69,29 @@ export function handleFirestoreError(
 }
 
 export async function signInWithGoogle() {
+  if (
+    typeof window !== 'undefined' &&
+    window.fluentDesktop?.isElectron &&
+    window.fluentDesktop?.signInWithGoogle
+  ) {
+    const bridgeResult = await window.fluentDesktop.signInWithGoogle(
+      firebaseConfig.authDomain
+    );
+    if (!bridgeResult.ok) {
+      const error = new Error(
+        bridgeResult.message || 'Google Sign-In did not complete.'
+      ) as Error & { code?: string };
+      error.code = bridgeResult.code || 'auth/popup-closed-by-user';
+      throw error;
+    }
+
+    const credential = GoogleAuthProvider.credential(
+      bridgeResult.idToken ?? null,
+      bridgeResult.accessToken ?? null
+    );
+    return signInWithCredential(auth, credential);
+  }
+
   return signInWithPopup(auth, googleProvider);
 }
 
@@ -75,7 +99,13 @@ export async function signOutAccount() {
   return firebaseSignOut(auth);
 }
 
+const isDesktopAuthBridgeWindow =
+  typeof window !== 'undefined' &&
+  (window.location.pathname === '/__notely_auth_bridge__' ||
+    new URLSearchParams(window.location.search).get('notely_auth_bridge') === '1');
+
 async function testConnection() {
+  if (isDesktopAuthBridgeWindow) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {

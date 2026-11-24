@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   CheckSquare,
@@ -21,6 +21,7 @@ import {
   WorkspaceTab,
 } from '../types/workspace';
 import { extractVariables } from '../utils/templateEngine';
+import { GhostTagInput } from './GhostTagInput';
 
 interface TemplateContextMenuProps {
   x: number;
@@ -29,6 +30,7 @@ interface TemplateContextMenuProps {
   categories: TemplateCategory[];
   tabs: WorkspaceTab[];
   activeTabId: string;
+  availableTags: string[];
   isSelectionMode: boolean;
   isTargetInSelection: boolean;
   onClose: () => void;
@@ -53,6 +55,7 @@ export const TemplateContextMenu: React.FC<TemplateContextMenuProps> = ({
   categories,
   tabs,
   activeTabId,
+  availableTags,
   isSelectionMode,
   isTargetInSelection,
   onClose,
@@ -93,6 +96,17 @@ export const TemplateContextMenu: React.FC<TemplateContextMenuProps> = ({
     targetTemplates.every((t) => t.categoryId === targetTemplates[0].categoryId)
       ? targetTemplates[0].categoryId
       : null;
+
+  // Exclude tags that are already applied to every targeted template
+  const alreadyPresentOnAllTargets = useMemo(() => {
+    if (targetTemplates.length === 0) return [];
+    const firstTags = targetTemplates[0].tags.map((t) => t.toLowerCase());
+    if (targetTemplates.length === 1) return firstTags;
+    const otherTagSets = targetTemplates
+      .slice(1)
+      .map((tpl) => new Set(tpl.tags.map((t) => t.toLowerCase())));
+    return firstTags.filter((tag) => otherTagSets.every((set) => set.has(tag)));
+  }, [targetTemplates]);
 
   useLayoutEffect(() => {
     const el = menuRef.current;
@@ -406,14 +420,18 @@ export const TemplateContextMenu: React.FC<TemplateContextMenuProps> = ({
           onMouseEnter={() => setActiveSubmenu(null)}
           className="px-2.5 py-1.5 flex items-center gap-1"
         >
-          <input
-            ref={newTagInputRef}
-            type="text"
+          <GhostTagInput
+            inputRef={newTagInputRef}
             value={newTagName}
-            onChange={(e) => setNewTagName(e.target.value)}
+            onChange={setNewTagName}
+            suggestions={availableTags}
+            excludeTags={alreadyPresentOnAllTargets}
             placeholder="Tag name..."
             maxLength={24}
-            className="flex-1 min-w-0 h-7 px-2 text-xs rounded bg-[var(--surface-input)] border border-[var(--accent)] text-slate-900 dark:text-slate-100 focus:outline-none"
+            ariaLabel="Tag name"
+            containerClassName="flex-1 min-w-0 h-7 rounded bg-[var(--surface-input)] border border-[var(--accent)]"
+            paddingClassName="px-2"
+            inputTextClassName="text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
           />
           <button
             type="submit"

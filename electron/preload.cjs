@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('fluentDesktop', {
     ipcRenderer.invoke('backup:export', defaultFilename, jsonString),
   importBackupDialog: () => ipcRenderer.invoke('backup:import'),
 
+  signInWithGoogle: (authDomain) =>
+    ipcRenderer.invoke('auth:googleSignIn', authDomain),
+
   onOpenQuickJump: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('desktop:open-quick-jump', listener);

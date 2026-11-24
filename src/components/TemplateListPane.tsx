@@ -27,6 +27,7 @@ interface TemplateListPaneProps {
   categories: TemplateCategory[];
   tabs: WorkspaceTab[];
   activeTabId: string;
+  availableTags: string[];
   selectedTemplateId: string | null;
   copiedTemplateId: string | null;
   searchQuery: string;
@@ -61,6 +62,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
   categories,
   tabs,
   activeTabId,
+  availableTags,
   selectedTemplateId,
   copiedTemplateId,
   searchQuery,
@@ -654,6 +656,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
           categories={categories}
           tabs={tabs}
           activeTabId={activeTabId}
+          availableTags={availableTags}
           isSelectionMode={isSelectionMode}
           isTargetInSelection={multiSelectedIds.has(contextMenu.clickedId)}
           onClose={() => setContextMenu(null)}

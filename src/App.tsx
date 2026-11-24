@@ -833,6 +833,21 @@ export default function App() {
     [workspace.templates, activeTab?.id]
   );
 
+  // Unique tags in the active tab ordered by usage frequency descending, then alphabetically
+  const activeTabTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const tpl of templatesInTab) {
+      for (const rawTag of tpl.tags) {
+        const tag = rawTag.trim().toLowerCase();
+        if (!tag) continue;
+        counts.set(tag, (counts.get(tag) || 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([tag]) => tag);
+  }, [templatesInTab]);
+
   const filteredTemplates = useMemo(() => {
     const validCatIds = new Set(categoriesInTab.map((c) => c.id));
     const catNameMap = new Map(categoriesInTab.map((c) => [c.id, c.name]));
@@ -1731,6 +1746,7 @@ export default function App() {
             categories={categoriesInTab}
             tabs={workspace.tabs}
             activeTabId={activeTab?.id ?? ''}
+            availableTags={activeTabTags}
             selectedTemplateId={selectedTemplate?.id ?? null}
             copiedTemplateId={copiedRowId}
             searchQuery={searchQuery}
@@ -1777,6 +1793,7 @@ export default function App() {
             template={selectedTemplate}
             tabName={activeTab?.name ?? 'Workspace'}
             categories={categoriesInTab}
+            availableTags={activeTabTags}
             viewMode={inspectorMode}
             copiedFormat={copiedInspectorFormat}
             onChangeViewMode={setInspectorMode}

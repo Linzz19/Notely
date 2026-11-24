@@ -27,11 +27,13 @@ import {
   TemplateCategory,
 } from '../types/workspace';
 import { extractVariables, markdownToHtml } from '../utils/templateEngine';
+import { GhostTagInput } from './GhostTagInput';
 
 interface TemplateInspectorProps {
   template: SnippetTemplate | null;
   tabName: string;
   categories: TemplateCategory[];
+  availableTags: string[];
   viewMode: InspectorViewMode;
   copiedFormat: CopyFormat | null;
   onChangeViewMode: (mode: InspectorViewMode) => void;
@@ -54,6 +56,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
   template,
   tabName,
   categories,
+  availableTags,
   viewMode,
   copiedFormat,
   onChangeViewMode,
@@ -503,10 +506,17 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                       </button>
                     </span>
                   ))}
-                  <input
-                    type="text"
+                  <GhostTagInput
                     value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
+                    onChange={setTagInput}
+                    suggestions={availableTags}
+                    excludeTags={template.tags}
+                    allowCommaSeparated
+                    placeholder="+ Add tag (Enter)"
+                    ariaLabel="Add tag"
+                    containerClassName="min-w-[140px] flex-1 max-w-[260px] h-7"
+                    paddingClassName="px-1.5"
+                    inputTextClassName="text-slate-800 dark:text-slate-200 placeholder:text-slate-400"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ',') {
                         e.preventDefault();
@@ -522,8 +532,6 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                     onBlur={() => {
                       if (tagInput.trim()) handleAddTag(tagInput);
                     }}
-                    placeholder="+ Add tag (Enter)"
-                    className="w-32 h-7 px-1.5 text-xs bg-transparent text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none"
                   />
                 </div>
               </div>

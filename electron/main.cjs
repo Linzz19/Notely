@@ -8,6 +8,7 @@ const {
   Menu,
   nativeImage,
   safeStorage,
+  session,
   shell,
   Tray,
 } = require('electron');
@@ -42,8 +43,16 @@ const MIME_TYPES = {
   '.ttf': 'font/ttf',
 };
 
+const AUTH_BRIDGE_PARTITION = 'notely-auth-bridge';
+const AUTH_BRIDGE_PATH = '/__notely_auth_bridge__';
+const AUTH_DOMAIN_REGEX =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(firebaseapp\.com|web\.app)$/i;
+const MAX_OAUTH_TOKEN_LENGTH = 16384;
+
 let localAppServer = null;
 let localAppUrl = null;
+let activeAuthOrigin = null;
+let activeAuthWindow = null;
 
 function isFirebaseAuthUrl(rawUrl) {
   // Firebase signInWithPopup opens an empty / about:blank window synchronously
@@ -92,13 +101,6 @@ function startLocalAppServer() {
 
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      // Allow GET and HEAD only
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Method Not Allowed');
-        return;
-      }
-
       // DNS rebinding guard: accept only local loopback Host headers
       const hostHeader = String(req.headers.host || '').toLowerCase();
       const allowedHosts = new Set([
@@ -108,6 +110,36 @@ function startLocalAppServer() {
       if (!allowedHosts.has(hostHeader)) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Forbidden');
+        return;
+      }
+
+      const requestOrigin = String(req.headers.origin || '');
+      const isAllowedAuthBridgeOrigin = Boolean(
+        activeAuthOrigin && requestOrigin === activeAuthOrigin
+      );
+
+      // Handle CORS + Private Network Access preflight only for the active Firebase authDomain bridge
+      if (req.method === 'OPTIONS') {
+        if (!isAllowedAuthBridgeOrigin) {
+          res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Forbidden');
+          return;
+        }
+        res.writeHead(204, {
+          'Access-Control-Allow-Origin': activeAuthOrigin,
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Access-Control-Allow-Private-Network': 'true',
+          Vary: 'Origin',
+        });
+        res.end();
+        return;
+      }
+
+      // Allow GET and HEAD only
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Method Not Allowed');
         return;
       }
 
@@ -135,13 +167,21 @@ function startLocalAppServer() {
       }
 
       const ext = path.extname(filePath).toLowerCase();
-      res.writeHead(200, {
+      const responseHeaders = {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
         'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000',
         'X-Content-Type-Options': 'nosniff',
         'Referrer-Policy': 'strict-origin-when-cross-origin',
         'Content-Security-Policy': CSP_POLICY,
-      });
+      };
+
+      if (isAllowedAuthBridgeOrigin) {
+        responseHeaders['Access-Control-Allow-Origin'] = activeAuthOrigin;
+        responseHeaders['Access-Control-Allow-Private-Network'] = 'true';
+        responseHeaders.Vary = 'Origin';
+      }
+
+      res.writeHead(200, responseHeaders);
 
       if (req.method === 'HEAD') {
         res.end();
@@ -164,6 +204,309 @@ function startLocalAppServer() {
     });
 
     server.listen(LOCAL_APP_PORT, '127.0.0.1', onListening);
+  });
+}
+
+function resolveBuiltBridgeAssets() {
+  const indexHtmlPath = path.resolve(__dirname, '..', 'dist', 'index.html');
+  const html = fs.readFileSync(indexHtmlPath, 'utf8');
+  const scriptMatch = html.match(
+    /<script[^>]*type=["']module["'][^>]*src=["']([^"']+)["']/i
+  );
+  const cssMatch = html.match(
+    /<link[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["']/i
+  );
+
+  if (!scriptMatch || !scriptMatch[1]) {
+    throw new Error('Could not resolve desktop auth bridge bundle.');
+  }
+
+  const normalizeAssetPath = (rawPath) =>
+    rawPath.replace(/^\.?\//, '').replace(/^\/+/, '');
+
+  return {
+    scriptPath: normalizeAssetPath(scriptMatch[1]),
+    cssPath: cssMatch && cssMatch[1] ? normalizeAssetPath(cssMatch[1]) : null,
+  };
+}
+
+function isBridgePageUrl(rawUrl, expectedOrigin) {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.origin === expectedOrigin && parsed.pathname === AUTH_BRIDGE_PATH;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Runs Google Sign-In inside an isolated BrowserWindow hosted on Firebase's
+ * own always-authorized authDomain (https://<project>.firebaseapp.com), using
+ * Chromium's native HTTPS stack with zero protocol interception. Once Google
+ * OAuth completes, the bridge extracts the Google OAuth tokens and returns them
+ * to the main window to call signInWithCredential().
+ */
+async function runDesktopGoogleSignIn(rawAuthDomain) {
+  const authDomain = typeof rawAuthDomain === 'string' ? rawAuthDomain.trim().toLowerCase() : '';
+  if (!AUTH_DOMAIN_REGEX.test(authDomain)) {
+    return {
+      ok: false,
+      code: 'auth/invalid-auth-domain',
+      message: 'Invalid Firebase authDomain configuration.',
+    };
+  }
+
+  if (activeAuthWindow && !activeAuthWindow.isDestroyed()) {
+    activeAuthWindow.focus();
+    return {
+      ok: false,
+      code: 'auth/cancelled-popup-request',
+      message: 'A Google Sign-In window is already open.',
+    };
+  }
+
+  let baseUrl;
+  let assets;
+  try {
+    baseUrl = await startLocalAppServer();
+    assets = resolveBuiltBridgeAssets();
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'auth/internal-error',
+      message: err instanceof Error ? err.message : 'Unable to start sign-in bridge.',
+    };
+  }
+
+  const expectedOrigin = `https://${authDomain}`;
+  const bridgeUrl = `${expectedOrigin}${AUTH_BRIDGE_PATH}?notely_auth_bridge=1`;
+  const scriptUrl = `${baseUrl}/${assets.scriptPath}`;
+  const cssUrl = assets.cssPath ? `${baseUrl}/${assets.cssPath}` : null;
+
+  const authSession = session.fromPartition(AUTH_BRIDGE_PARTITION);
+  try {
+    await authSession.clearStorageData({
+      storages: ['localstorage', 'indexdb', 'cachestorage'],
+    });
+  } catch {
+    // Non-fatal if isolated partition is empty
+  }
+
+  activeAuthOrigin = expectedOrigin;
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const authWindow = new BrowserWindow({
+      width: 500,
+      height: 660,
+      minWidth: 420,
+      minHeight: 540,
+      parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      modal: false,
+      show: false,
+      resizable: true,
+      minimizable: true,
+      maximizable: false,
+      autoHideMenuBar: true,
+      backgroundColor: '#161618',
+      title: 'Sign in with Google — Notely',
+      icon: getIconPath(),
+      webPreferences: {
+        preload: path.join(__dirname, 'auth-preload.cjs'),
+        partition: AUTH_BRIDGE_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+
+    activeAuthWindow = authWindow;
+    authWindow.webContents.setUserAgent(CHROME_USER_AGENT);
+
+    const cleanupAndResolve = (result) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener('auth:bridge-complete', onComplete);
+      ipcMain.removeListener('auth:bridge-fail', onFail);
+      if (activeAuthOrigin === expectedOrigin) {
+        activeAuthOrigin = null;
+      }
+      if (activeAuthWindow === authWindow) {
+        activeAuthWindow = null;
+      }
+      if (!authWindow.isDestroyed()) {
+        authWindow.close();
+      }
+      resolve(result);
+    };
+
+    const isTrustedBridgeSender = (event) => {
+      if (authWindow.isDestroyed() || event.sender !== authWindow.webContents) {
+        return false;
+      }
+      const frameUrl = event.senderFrame?.url || authWindow.webContents.getURL();
+      return isBridgePageUrl(frameUrl, expectedOrigin);
+    };
+
+    const onComplete = (event, payload) => {
+      if (!isTrustedBridgeSender(event)) return;
+      const idToken =
+        payload &&
+        typeof payload.idToken === 'string' &&
+        payload.idToken.length > 0 &&
+        payload.idToken.length <= MAX_OAUTH_TOKEN_LENGTH
+          ? payload.idToken
+          : null;
+      const accessToken =
+        payload &&
+        typeof payload.accessToken === 'string' &&
+        payload.accessToken.length > 0 &&
+        payload.accessToken.length <= MAX_OAUTH_TOKEN_LENGTH
+          ? payload.accessToken
+          : null;
+
+      if (!idToken && !accessToken) {
+        cleanupAndResolve({
+          ok: false,
+          code: 'auth/internal-error',
+          message: 'Google Sign-In did not return a valid OAuth token.',
+        });
+        return;
+      }
+
+      cleanupAndResolve({
+        ok: true,
+        idToken,
+        accessToken,
+      });
+    };
+
+    const onFail = (event, error) => {
+      if (!isTrustedBridgeSender(event)) return;
+      cleanupAndResolve({
+        ok: false,
+        code:
+          error && typeof error.code === 'string'
+            ? error.code
+            : 'auth/internal-error',
+        message:
+          error && typeof error.message === 'string'
+            ? error.message
+            : 'Google Sign-In failed.',
+      });
+    };
+
+    ipcMain.on('auth:bridge-complete', onComplete);
+    ipcMain.on('auth:bridge-fail', onFail);
+
+    // Restrict auth window navigation strictly to HTTPS OAuth endpoints
+    authWindow.webContents.on('will-navigate', (event, targetUrl) => {
+      try {
+        const parsed = new URL(targetUrl);
+        if (parsed.protocol !== 'https:') {
+          event.preventDefault();
+        }
+      } catch {
+        event.preventDefault();
+      }
+    });
+
+    // Open external help/privacy links in the default system browser
+    authWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
+
+    // Mount Notely's lightweight auth bridge bundle whenever the window lands on our bridge path
+    authWindow.webContents.on('dom-ready', () => {
+      if (settled || authWindow.isDestroyed()) return;
+      const currentUrl = authWindow.webContents.getURL();
+      if (isBridgePageUrl(currentUrl, expectedOrigin)) {
+        const bootstrapCode = `(() => {
+          document.title = 'Sign in with Google — Notely';
+          document.documentElement.className = 'dark';
+          document.head.innerHTML = '<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><style>html,body{margin:0;padding:0;background:#161618;color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}</style>';
+          document.body.innerHTML = '<div id="root"><div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px;"><div style="width:34px;height:34px;border-radius:50%;border:2px solid rgba(76,194,255,0.25);border-top-color:#4CC2FF;animation:notelySpin .8s linear infinite;"></div><div style="font-size:14px;font-weight:500;">Connecting to Google Sign-In...</div></div></div><style>@keyframes notelySpin{to{transform:rotate(360deg)}}</style>';
+          const cssHref = ${JSON.stringify(cssUrl)};
+          if (cssHref) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.crossOrigin = 'anonymous';
+            link.href = cssHref;
+            document.head.appendChild(link);
+          }
+          const script = document.createElement('script');
+          script.type = 'module';
+          script.crossOrigin = 'anonymous';
+          script.src = ${JSON.stringify(scriptUrl)};
+          script.onerror = () => {
+            if (window.notelyAuthBridge) {
+              window.notelyAuthBridge.fail({
+                code: 'auth/network-request-failed',
+                message: 'Could not initialize the desktop sign-in bridge.',
+              });
+            }
+          };
+          document.head.appendChild(script);
+        })();`;
+
+        void authWindow.webContents
+          .executeJavaScript(bootstrapCode, true)
+          .then(() => {
+            if (!settled && !authWindow.isDestroyed() && !authWindow.isVisible()) {
+              authWindow.show();
+              authWindow.focus();
+            }
+          })
+          .catch(() => {
+            cleanupAndResolve({
+              ok: false,
+              code: 'auth/internal-error',
+              message: 'Could not initialize the desktop sign-in window.',
+            });
+          });
+      } else if (!authWindow.isVisible()) {
+        authWindow.show();
+        authWindow.focus();
+      }
+    });
+
+    authWindow.webContents.on(
+      'did-fail-load',
+      (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+        // Ignore ERR_ABORTED (-3) triggered normally during OAuth redirects
+        if (!isMainFrame || errorCode === -3) return;
+        cleanupAndResolve({
+          ok: false,
+          code: 'auth/network-request-failed',
+          message:
+            errorDescription ||
+            'Could not reach Google Sign-In. Check your internet connection.',
+        });
+      }
+    );
+
+    authWindow.on('closed', () => {
+      cleanupAndResolve({
+        ok: false,
+        code: 'auth/popup-closed-by-user',
+        message: 'Sign-in window was closed.',
+      });
+    });
+
+    void authWindow.loadURL(bridgeUrl).catch((err) => {
+      if (err && typeof err.code === 'string' && err.code === 'ERR_ABORTED') {
+        return;
+      }
+      cleanupAndResolve({
+        ok: false,
+        code: 'auth/network-request-failed',
+        message: 'Could not open Google Sign-In. Check your internet connection.',
+      });
+    });
   });
 }
 
@@ -951,6 +1294,10 @@ function registerIpcHandlers() {
     const content = fs.readFileSync(filePath, 'utf8');
     return { canceled: false, filePath, content };
   });
+
+  ipcMain.handle('auth:googleSignIn', (_event, authDomain) =>
+    runDesktopGoogleSignIn(authDomain)
+  );
 }
 
 app.on('second-instance', () => {
@@ -1001,6 +1348,15 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  if (activeAuthWindow && !activeAuthWindow.isDestroyed()) {
+    try {
+      activeAuthWindow.close();
+    } catch {
+      // Ignore close error on exit
+    }
+    activeAuthWindow = null;
+  }
+  activeAuthOrigin = null;
   if (localAppServer) {
     try {
       localAppServer.close();

@@ -55,6 +55,22 @@ export interface AppUpdateState {
   isPortable: boolean;
 }
 
+export interface DesktopGoogleAuthResult {
+  ok: boolean;
+  idToken?: string | null;
+  accessToken?: string | null;
+  code?: string;
+  message?: string;
+}
+
+export interface NotelyAuthBridge {
+  complete: (payload: {
+    idToken?: string | null;
+    accessToken?: string | null;
+  }) => void;
+  fail: (error: { code?: string; message?: string }) => void;
+}
+
 export interface FluentDesktopBridge {
   isElectron: boolean;
   platform: string;
@@ -79,12 +95,14 @@ export interface FluentDesktopBridge {
     jsonString: string
   ) => Promise<DesktopExportResult>;
   importBackupDialog: () => Promise<DesktopImportResult>;
+  signInWithGoogle?: (authDomain: string) => Promise<DesktopGoogleAuthResult>;
   onOpenQuickJump: (callback: () => void) => () => void;
 }
 
 declare global {
   interface Window {
     fluentDesktop?: FluentDesktopBridge;
+    notelyAuthBridge?: NotelyAuthBridge;
   }
 }
 
