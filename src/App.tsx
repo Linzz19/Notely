@@ -550,11 +550,17 @@ export default function App() {
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return;
       }
-      pushToast(
-        'Google Sign-In failed',
-        'error',
-        'Please allow the sign-in popup and try again.'
-      );
+      let detail = 'Please allow the sign-in popup and try again.';
+      if (code === 'auth/network-request-failed') {
+        detail = 'Check your internet connection and try again.';
+      } else if (code === 'auth/unauthorized-domain') {
+        detail = `Domain "${window.location.hostname || 'local'}" is not authorized in Firebase Auth.`;
+      } else if (code === 'auth/operation-not-allowed') {
+        detail = 'Google Sign-In is not enabled for this Firebase project.';
+      } else if (code && code !== 'auth/popup-blocked') {
+        detail = `Sign-in error (${code}). Please try again.`;
+      }
+      pushToast('Google Sign-In failed', 'error', detail);
     } finally {
       setAuthLoading(false);
     }

@@ -371,20 +371,41 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
 
   return (
     <header className="shrink-0 bg-[var(--surface-frame)] border-b border-[var(--surface-border)] select-none flex flex-col">
-      {/* Row 1: Dedicated 34px Window Titlebar (keeps Windows Minimize/Maximize/Close clear of all app controls) */}
+      {/* Row 1: Dedicated 38px Window Titlebar (Notely left, Quick Jump dead-center, Windows caption buttons clear on right) */}
       <div
-        className={`h-[34px] pl-3 sm:pl-4 flex items-center justify-between border-b border-[var(--surface-border)]/50 ${
-          isWindowsDesktop ? 'app-drag-region pr-[144px]' : 'pr-3 sm:pr-4'
+        className={`h-[38px] px-3 sm:px-4 grid items-center gap-2 border-b border-[var(--surface-border)]/60 ${
+          isWindowsDesktop
+            ? 'app-drag-region grid-cols-[minmax(144px,1fr)_auto_minmax(144px,1fr)]'
+            : 'grid-cols-[minmax(68px,1fr)_auto_minmax(68px,1fr)]'
         }`}
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 justify-self-start">
           <span className="font-display text-[13px] font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0">
             Notely
           </span>
         </div>
+
+        {/* Centered Quick Jump Command Search Trigger */}
+        <button
+          type="button"
+          onClick={onOpenCommandPalette}
+          className="app-no-drag justify-self-center flex items-center justify-between gap-2 h-[26px] w-[190px] sm:w-[270px] md:w-[360px] px-2.5 rounded-md bg-[var(--surface-panel)]/90 hover:bg-[var(--surface-panel)] border border-[var(--surface-border)] hover:border-[var(--surface-border-strong)] text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.03)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          title="Quick Jump across all tabs (Ctrl+K)"
+        >
+          <span className="flex items-center gap-1.5 min-w-0">
+            <Search className="w-3.5 h-3.5 shrink-0 opacity-75" />
+            <span className="truncate">Quick Jump</span>
+          </span>
+          <kbd className="hidden sm:inline-block font-mono text-[10px] leading-none px-1.5 py-0.5 rounded bg-[var(--surface-subtle)] text-slate-500 dark:text-slate-400 border border-[var(--surface-border)] shrink-0">
+            Ctrl K
+          </kbd>
+        </button>
+
+        {/* Balanced right spacer (reserves 144px for Windows Minimize/Maximize/Close overlay) */}
+        <div aria-hidden="true" className="h-full" />
       </div>
 
-      {/* Row 2: Full-width Interactive Tab Bar & Utility Controls (below Windows caption buttons) */}
+      {/* Row 2: Full-width Interactive Tab Strip + Right-aligned (+New Tab | Backup ? Settings Sign In) */}
       <div className="app-no-drag h-[44px] px-3 sm:px-4 flex items-center justify-between gap-2 sm:gap-3">
         {/* Zone 1: Narrow-window categories toggle */}
         <button
@@ -397,7 +418,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           <Menu className="w-4 h-4" />
         </button>
 
-        {/* Zone 2: Horizontal Project Tabs + Pinned New Tab Control */}
+        {/* Zone 2: Horizontal Project Tabs */}
         <div className="flex-1 min-w-0 flex items-end h-full gap-1">
           {canScrollLeft && (
             <button
@@ -619,12 +640,14 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
         )}
+      </div>
 
-        {/* Pinned New Tab Control (always clickable & never clipped by overflow) */}
+      {/* Zone 3: +New Tab | Backup, Guide, Settings, and Sign In */}
+      <div className="app-no-drag flex items-center gap-1 shrink-0">
         {isAddingTab ? (
           <form
             onSubmit={handleAddSubmit}
-            className="app-no-drag flex items-center gap-1 h-[34px] px-2 mb-1 bg-[var(--surface-panel)] border border-[var(--accent)] rounded-md shrink-0"
+            className="app-no-drag flex items-center gap-1 h-8 px-2 bg-[var(--surface-panel)] border border-[var(--accent)] rounded-md shrink-0"
           >
             <input
               ref={addInputRef}
@@ -666,29 +689,19 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           <button
             type="button"
             onClick={() => setIsAddingTab(true)}
-            className="app-no-drag flex items-center gap-1 h-[32px] px-2 mb-1 rounded-md text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-[var(--surface-hover)] dark:text-slate-400 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="app-no-drag flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-[var(--surface-panel)] border border-[var(--surface-border)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:border-[var(--surface-border-strong)] hover:text-slate-950 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             title="Add project tab"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">New Tab</span>
+            <Plus className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <span className="hidden sm:inline">New Tab</span>
           </button>
         )}
-      </div>
 
-      {/* Zone 3: Streamlined utility controls (compact on narrow/half-screen windows) */}
-      <div className="app-no-drag flex items-center gap-1 shrink-0">
-        <button
-          type="button"
-          onClick={onOpenCommandPalette}
-          className="app-no-drag flex items-center gap-1.5 h-8 px-2 xl:px-2.5 rounded-md bg-[var(--surface-panel)] border border-[var(--surface-border)] text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-[var(--surface-border-strong)] hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          title="Quick Jump across all tabs (Ctrl+K)"
-        >
-          <Search className="w-3.5 h-3.5 text-slate-400" />
-          <span className="hidden xl:inline">Quick Jump</span>
-          <kbd className="hidden xl:inline-block font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--surface-subtle)] text-slate-500 dark:text-slate-400 border border-[var(--surface-border)]">
-            Ctrl K
-          </kbd>
-        </button>
+        {/* Vertical separator between +New Tab and right utility actions */}
+        <span
+          aria-hidden="true"
+          className="h-4 w-px bg-[var(--surface-border-strong)] mx-1 shrink-0"
+        />
 
         <button
           type="button"
@@ -697,7 +710,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           title="Export or import JSON workspace backup"
         >
           <DatabaseBackup className="w-3.5 h-3.5" />
-          <span className="hidden xl:inline">Backup</span>
+          <span className="hidden lg:inline">Backup</span>
         </button>
 
         <button

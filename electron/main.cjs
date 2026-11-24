@@ -46,15 +46,24 @@ let localAppServer = null;
 let localAppUrl = null;
 
 function isFirebaseAuthUrl(rawUrl) {
+  // Firebase signInWithPopup opens an empty / about:blank window synchronously
+  // before redirecting it to https://<project>.firebaseapp.com/__/auth/handler.
+  if (!rawUrl || rawUrl === 'about:blank') {
+    return true;
+  }
   try {
     const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:') return false;
     const host = parsed.hostname.toLowerCase();
     return (
       host.endsWith('.firebaseapp.com') ||
+      host.endsWith('.web.app') ||
       host === 'accounts.google.com' ||
       host === 'apis.google.com' ||
       host === 'accounts.youtube.com' ||
-      host === 'myaccount.google.com'
+      host === 'myaccount.google.com' ||
+      host === 'consent.google.com' ||
+      host === 'gds.google.com'
     );
   } catch {
     return false;
@@ -70,12 +79,12 @@ function startLocalAppServer() {
 
   const CSP_POLICY = [
     "default-src 'self'",
-    "script-src 'self' https://apis.google.com https://accounts.google.com https://www.gstatic.com",
+    "script-src 'self' 'unsafe-inline' https://apis.google.com https://accounts.google.com https://www.gstatic.com https://*.firebaseapp.com https://www.google.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: https://*.googleusercontent.com https://*.gstatic.com",
-    "connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://*.firebaseio.com wss://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com",
-    "frame-src https://*.firebaseapp.com https://accounts.google.com",
+    "connect-src 'self' https://*.googleapis.com https://www.googleapis.com https://*.firebaseapp.com https://*.firebaseio.com wss://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com",
+    "frame-src https://*.firebaseapp.com https://accounts.google.com https://apis.google.com",
     "object-src 'none'",
     "base-uri 'self'",
     "frame-ancestors 'none'",
@@ -130,8 +139,7 @@ function startLocalAppServer() {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
         'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000',
         'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer',
-        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
         'Content-Security-Policy': CSP_POLICY,
       });
 
@@ -567,7 +575,7 @@ function getTitleBarOverlayOptions(themeInput) {
     return {
       color: themeInput.color,
       symbolColor: themeInput.symbolColor,
-      height: 34,
+      height: 38,
     };
   }
   const mode = themeInput === 'dark' ? 'dark' : 'light';
@@ -575,7 +583,7 @@ function getTitleBarOverlayOptions(themeInput) {
   return {
     color: fallback.color,
     symbolColor: fallback.symbolColor,
-    height: 34,
+    height: 38,
   };
 }
 
@@ -636,7 +644,7 @@ function createMainWindow() {
     mainWindow?.show();
   });
 
-  // Allow Firebase/Google OAuth popups; open all other external links in default Windows browser
+  // Allow Firebase/Google OAuth popups (including initial about:blank pre-open); open other links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isFirebaseAuthUrl(url)) {
       return {
@@ -663,6 +671,28 @@ function createMainWindow() {
       shell.openExternal(url);
     }
     return { action: 'deny' };
+  });
+
+  // Harden Firebase/Google OAuth popup windows while permitting Google + SSO HTTPS redirects
+  mainWindow.webContents.on('did-create-window', (childWindow) => {
+    childWindow.webContents.setUserAgent(CHROME_USER_AGENT);
+    childWindow.webContents.on('will-navigate', (event, targetUrl) => {
+      if (!targetUrl || targetUrl === 'about:blank') return;
+      try {
+        const parsed = new URL(targetUrl);
+        if (parsed.protocol !== 'https:') {
+          event.preventDefault();
+        }
+      } catch {
+        event.preventDefault();
+      }
+    });
+    childWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
   });
 
   // Lock main window navigation to Notely's own local origin only
