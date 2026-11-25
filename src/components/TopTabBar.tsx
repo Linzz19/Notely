@@ -18,7 +18,6 @@ import {
   AppUpdateState,
   DesktopPreferences,
   DesktopPreferencesPatch,
-  DesktopSignInMode,
 } from '../types/electron';
 import { ThemeMode, ThemePreset, WorkspaceTab } from '../types/workspace';
 import { AccountMenu, CloudSyncStatus } from './AccountMenu';
@@ -35,13 +34,13 @@ interface TopTabBarProps {
   updateState: AppUpdateState;
   authUser: User | null;
   authLoading: boolean;
-  authPendingMode: DesktopSignInMode | null;
+  isWaitingForBrowserAuth: boolean;
   cloudSyncStatus: CloudSyncStatus;
   lastSyncedAt: string | null;
   cloudSyncError: string | null;
   encryptionEnabled: boolean;
   encryptionUnlocked: boolean;
-  onSignInGoogle: (mode?: DesktopSignInMode) => void;
+  onSignInGoogle: () => void;
   onCancelSignInGoogle: () => void;
   onSignOutGoogle: () => void;
   onSyncNow: () => void;
@@ -98,7 +97,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   updateState,
   authUser,
   authLoading,
-  authPendingMode,
+  isWaitingForBrowserAuth,
   cloudSyncStatus,
   lastSyncedAt,
   cloudSyncError,
@@ -783,7 +782,7 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
         <AccountMenu
           user={authUser}
           authLoading={authLoading}
-          authPendingMode={authPendingMode}
+          isWaitingForBrowserAuth={isWaitingForBrowserAuth}
           isDesktopApp={isDesktopApp}
           syncStatus={cloudSyncStatus}
           lastSyncedAt={lastSyncedAt}

@@ -48,6 +48,16 @@ export const DesktopWebAuthPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const autoReturnTriggeredRef = useRef(false);
 
+  // Scrub one-time state & callback_port from the browser address bar and history
+  useEffect(() => {
+    try {
+      const cleanUrl = `${window.location.pathname}?desktop_auth=1`;
+      window.history.replaceState(null, '', cleanUrl);
+    } catch {
+      // Ignore history API errors in restricted contexts
+    }
+  }, []);
+
   // Respect system light/dark preference on the standalone browser relay page
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');

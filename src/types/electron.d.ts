@@ -55,11 +55,7 @@ export interface AppUpdateState {
   isPortable: boolean;
 }
 
-export type DesktopSignInMode = 'browser' | 'window';
-
 export interface DesktopGoogleAuthRequest {
-  authDomain: string;
-  mode?: DesktopSignInMode;
   webAuthUrl?: string;
 }
 
@@ -67,18 +63,8 @@ export interface DesktopGoogleAuthResult {
   ok: boolean;
   idToken?: string | null;
   accessToken?: string | null;
-  usedMode?: DesktopSignInMode;
-  fellBackToWindow?: boolean;
   code?: string;
   message?: string;
-}
-
-export interface NotelyAuthBridge {
-  complete: (payload: {
-    idToken?: string | null;
-    accessToken?: string | null;
-  }) => void;
-  fail: (error: { code?: string; message?: string }) => void;
 }
 
 export interface FluentDesktopBridge {
@@ -106,7 +92,7 @@ export interface FluentDesktopBridge {
   ) => Promise<DesktopExportResult>;
   importBackupDialog: () => Promise<DesktopImportResult>;
   signInWithGoogle?: (
-    request: string | DesktopGoogleAuthRequest
+    request?: DesktopGoogleAuthRequest
   ) => Promise<DesktopGoogleAuthResult>;
   cancelGoogleSignIn?: () => Promise<void>;
   onOpenQuickJump: (callback: () => void) => () => void;
@@ -115,7 +101,6 @@ export interface FluentDesktopBridge {
 declare global {
   interface Window {
     fluentDesktop?: FluentDesktopBridge;
-    notelyAuthBridge?: NotelyAuthBridge;
   }
 }
 

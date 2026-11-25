@@ -25,7 +25,6 @@ import {
   AppUpdateState,
   DesktopPreferences,
   DesktopPreferencesPatch,
-  DesktopSignInMode,
 } from './types/electron';
 import {
   CopyFormat,
@@ -118,8 +117,7 @@ export default function App() {
   >(null);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authPendingMode, setAuthPendingMode] =
-    useState<DesktopSignInMode | null>(null);
+  const [isWaitingForBrowserAuth, setIsWaitingForBrowserAuth] = useState(false);
   const signInRequestIdRef = useRef(0);
   const [cloudSyncStatus, setCloudSyncStatus] =
     useState<CloudSyncStatus>('signed-out');
@@ -546,62 +544,55 @@ export default function App() {
     };
   }, [authUser]);
 
-  const handleSignInGoogle = useCallback(
-    async (mode?: DesktopSignInMode) => {
-      const requestId = ++signInRequestIdRef.current;
-      const effectiveMode: DesktopSignInMode | null = isDesktopApp
-        ? mode || 'browser'
-        : null;
-      try {
-        setAuthLoading(true);
-        setAuthPendingMode(effectiveMode);
-        await signInWithGoogle(
-          effectiveMode ? { mode: effectiveMode } : undefined
-        );
-        pushToast(
-          'Signed in with Google',
-          'success',
-          'Cloud sync is now active.'
-        );
-      } catch (err) {
-        const code =
-          typeof err === 'object' && err !== null && 'code' in err
-            ? String((err as { code?: unknown }).code)
-            : '';
-        if (
-          code === 'auth/popup-closed-by-user' ||
-          code === 'auth/cancelled-popup-request'
-        ) {
-          return;
-        }
-        let detail = 'Please allow the sign-in popup and try again.';
-        if (code === 'auth/network-request-failed') {
-          detail = 'Check your internet connection and try again.';
-        } else if (code === 'auth/unauthorized-domain') {
-          detail = `Domain "${window.location.hostname || 'local'}" is not authorized in Firebase Auth.`;
-        } else if (code === 'auth/operation-not-allowed') {
-          detail = 'Google Sign-In is not enabled for this Firebase project.';
-        } else if (code === 'auth/timeout') {
-          detail =
-            'Browser sign-in timed out. Try again or use the built-in sign-in window.';
-        } else if (code && code !== 'auth/popup-blocked') {
-          detail = `Sign-in error (${code}). Please try again.`;
-        }
-        pushToast('Google Sign-In failed', 'error', detail);
-      } finally {
-        if (signInRequestIdRef.current === requestId) {
-          setAuthLoading(false);
-          setAuthPendingMode(null);
-        }
+  const handleSignInGoogle = useCallback(async () => {
+    const requestId = ++signInRequestIdRef.current;
+    try {
+      setAuthLoading(true);
+      if (isDesktopApp) {
+        setIsWaitingForBrowserAuth(true);
       }
-    },
-    [isDesktopApp, pushToast]
-  );
+      await signInWithGoogle();
+      pushToast(
+        'Signed in with Google',
+        'success',
+        'Cloud sync is now active.'
+      );
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request'
+      ) {
+        return;
+      }
+      let detail = 'Please allow the sign-in popup and try again.';
+      if (code === 'auth/network-request-failed') {
+        detail = 'Check your internet connection and try again.';
+      } else if (code === 'auth/unauthorized-domain') {
+        detail = `Domain "${window.location.hostname || 'local'}" is not authorized in Firebase Auth.`;
+      } else if (code === 'auth/operation-not-allowed') {
+        detail = 'Google Sign-In is not enabled for this Firebase project.';
+      } else if (code === 'auth/timeout') {
+        detail = 'Browser sign-in timed out. Please try again.';
+      } else if (code && code !== 'auth/popup-blocked') {
+        detail = `Sign-in error (${code}). Please try again.`;
+      }
+      pushToast('Google Sign-In failed', 'error', detail);
+    } finally {
+      if (signInRequestIdRef.current === requestId) {
+        setAuthLoading(false);
+        setIsWaitingForBrowserAuth(false);
+      }
+    }
+  }, [isDesktopApp, pushToast]);
 
   const handleCancelSignInGoogle = useCallback(() => {
     signInRequestIdRef.current += 1;
     setAuthLoading(false);
-    setAuthPendingMode(null);
+    setIsWaitingForBrowserAuth(false);
     void cancelDesktopGoogleSignIn();
   }, []);
 
@@ -1713,13 +1704,13 @@ export default function App() {
         updateState={updateState}
         authUser={authUser}
         authLoading={authLoading}
-        authPendingMode={authPendingMode}
+        isWaitingForBrowserAuth={isWaitingForBrowserAuth}
         cloudSyncStatus={cloudSyncStatus}
         lastSyncedAt={lastSyncedAt}
         cloudSyncError={cloudSyncError}
         encryptionEnabled={encryptionConfig.enabled}
         encryptionUnlocked={isVaultUnlocked}
-        onSignInGoogle={(mode) => void handleSignInGoogle(mode)}
+        onSignInGoogle={() => void handleSignInGoogle()}
         onCancelSignInGoogle={handleCancelSignInGoogle}
         onSignOutGoogle={() => void handleSignOutGoogle()}
         onSyncNow={() => void handleManualCloudSync()}
