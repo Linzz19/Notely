@@ -38,15 +38,10 @@ interface TopTabBarProps {
   cloudSyncStatus: CloudSyncStatus;
   lastSyncedAt: string | null;
   cloudSyncError: string | null;
-  encryptionEnabled: boolean;
-  encryptionUnlocked: boolean;
   onSignInGoogle: () => void;
   onCancelSignInGoogle: () => void;
   onSignOutGoogle: () => void;
   onSyncNow: () => void;
-  onOpenVaultSetup: () => void;
-  onOpenVaultUnlock: () => void;
-  onOpenVaultDisable: () => void;
   onSelectTab: (tabId: string) => void;
   onCreateTab: (name: string) => void;
   onRenameTab: (tabId: string, newName: string) => void;
@@ -101,15 +96,10 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
   cloudSyncStatus,
   lastSyncedAt,
   cloudSyncError,
-  encryptionEnabled,
-  encryptionUnlocked,
   onSignInGoogle,
   onCancelSignInGoogle,
   onSignOutGoogle,
   onSyncNow,
-  onOpenVaultSetup,
-  onOpenVaultUnlock,
-  onOpenVaultDisable,
   onSelectTab,
   onCreateTab,
   onRenameTab,
@@ -787,15 +777,10 @@ export const TopTabBar: React.FC<TopTabBarProps> = ({
           syncStatus={cloudSyncStatus}
           lastSyncedAt={lastSyncedAt}
           syncError={cloudSyncError}
-          encryptionEnabled={encryptionEnabled}
-          encryptionUnlocked={encryptionUnlocked}
           onSignIn={onSignInGoogle}
           onCancelSignIn={onCancelSignInGoogle}
           onSignOut={onSignOutGoogle}
           onSyncNow={onSyncNow}
-          onOpenVaultSetup={onOpenVaultSetup}
-          onOpenVaultUnlock={onOpenVaultUnlock}
-          onOpenVaultDisable={onOpenVaultDisable}
         />
         </div>
       </div>

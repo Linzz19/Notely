@@ -392,7 +392,7 @@ export const TemplateListPane: React.FC<TemplateListPaneProps> = ({
                   value=""
                   onChange={(e) => {
                     const val = e.target.value;
-                    if (val === '__placeholder__') return;
+                    if (!val) return;
                     onAssignTemplatesCategory(
                       selectedIdsArray,
                       val === '__unassigned__' ? '' : val

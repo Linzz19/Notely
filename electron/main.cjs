@@ -505,7 +505,19 @@ function getIconPath() {
 function atomicWriteJson(filePath, dataString) {
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, dataString, 'utf8');
-  fs.renameSync(tmpPath, filePath);
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    // On Windows, transient antivirus/indexer locks can cause EPERM/EBUSY on rename
+    fs.writeFileSync(filePath, dataString, 'utf8');
+    try {
+      if (fs.existsSync(tmpPath)) {
+        fs.unlinkSync(tmpPath);
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
 }
 
 /**

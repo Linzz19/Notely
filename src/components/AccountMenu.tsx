@@ -4,13 +4,9 @@ import {
   Cloud,
   CloudOff,
   ExternalLink,
-  KeyRound,
-  Lock,
   LogIn,
   LogOut,
   RefreshCw,
-  Shield,
-  ShieldCheck,
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -20,7 +16,6 @@ export type CloudSyncStatus =
   | 'signed-out'
   | 'syncing'
   | 'synced'
-  | 'locked'
   | 'offline'
   | 'error';
 
@@ -32,15 +27,10 @@ interface AccountMenuProps {
   syncStatus: CloudSyncStatus;
   lastSyncedAt: string | null;
   syncError: string | null;
-  encryptionEnabled: boolean;
-  encryptionUnlocked: boolean;
   onSignIn: () => void;
   onCancelSignIn: () => void;
   onSignOut: () => void;
   onSyncNow: () => void;
-  onOpenVaultSetup: () => void;
-  onOpenVaultUnlock: () => void;
-  onOpenVaultDisable: () => void;
 }
 
 function getInitials(user: User): string {
@@ -60,15 +50,10 @@ export function AccountMenu({
   syncStatus,
   lastSyncedAt,
   syncError,
-  encryptionEnabled,
-  encryptionUnlocked,
   onSignIn,
   onCancelSignIn,
   onSignOut,
   onSyncNow,
-  onOpenVaultSetup,
-  onOpenVaultUnlock,
-  onOpenVaultDisable,
 }: AccountMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
@@ -127,11 +112,7 @@ export function AccountMenu({
           aria-label="Account and cloud sync"
           aria-haspopup="dialog"
           aria-expanded={isOpen}
-          title={
-            syncStatus === 'locked'
-              ? `${user.displayName || user.email} — Encrypted Vault Locked`
-              : `${user.displayName || user.email} — Cloud Sync`
-          }
+          title={`${user.displayName || user.email} — Cloud Sync`}
           className={`app-no-drag relative flex items-center justify-center w-8 h-8 rounded-md transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
             isOpen
               ? 'bg-[var(--accent-soft)]'
@@ -150,12 +131,6 @@ export function AccountMenu({
             <span className="w-6 h-6 rounded-full bg-[var(--accent)] text-[var(--accent-fg)] text-[10px] font-bold flex items-center justify-center">
               {getInitials(user)}
             </span>
-          )}
-          {syncStatus === 'locked' && (
-            <span
-              aria-hidden="true"
-              className="absolute bottom-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-[var(--surface-frame)]"
-            />
           )}
         </button>
       ) : (
@@ -264,14 +239,6 @@ export function AccountMenu({
                       </span>
                     </>
                   )}
-                  {syncStatus === 'locked' && (
-                    <>
-                      <Lock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                      <span className="text-slate-700 dark:text-slate-200">
-                        Encrypted vault locked — enter your passphrase to resume cloud sync.
-                      </span>
-                    </>
-                  )}
                   {syncStatus === 'offline' && (
                     <>
                       <CloudOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -290,89 +257,19 @@ export function AccountMenu({
                   )}
                 </div>
 
-                {syncStatus === 'locked' ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsOpen(false);
-                      onOpenVaultUnlock();
-                    }}
-                    className="w-full h-7 px-2.5 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-[11.5px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    <KeyRound className="w-3 h-3" />
-                    <span>Unlock Encrypted Vault</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={syncStatus === 'syncing'}
-                    onClick={onSyncNow}
-                    className="w-full h-7 px-2.5 rounded-md border border-[var(--surface-border)] bg-[var(--surface-panel)] hover:bg-[var(--surface-hover)] text-[11.5px] font-medium text-slate-800 dark:text-slate-100 inline-flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
-                  >
-                    <RefreshCw
-                      className={`w-3 h-3 ${
-                        syncStatus === 'syncing' ? 'animate-spin' : ''
-                      }`}
-                    />
-                    <span>Sync Now</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Zero-Knowledge End-to-End Encryption Section */}
-              <div className="p-2.5 rounded-lg bg-[var(--surface-subtle)] border border-[var(--surface-border)] space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    {encryptionEnabled ? (
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    ) : (
-                      <Shield className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0" />
-                    )}
-                    <span className="text-[11.5px] font-semibold text-slate-800 dark:text-slate-100 truncate">
-                      {encryptionEnabled
-                        ? 'AES-256-GCM Encrypted'
-                        : 'End-to-End Encryption'}
-                    </span>
-                  </div>
-                  {encryptionEnabled && encryptionUnlocked && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsOpen(false);
-                        onOpenVaultDisable();
-                      }}
-                      className="text-[11px] font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 underline-offset-2 hover:underline shrink-0"
-                    >
-                      Turn Off
-                    </button>
-                  )}
-                </div>
-
-                {encryptionEnabled ? (
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                    {encryptionUnlocked
-                      ? 'Tabs, categories, templates, and tags are encrypted on your device before syncing.'
-                      : 'Unlock with your Sync Passphrase to decrypt your cloud workspace.'}
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                      Add a personal Sync Passphrase to encrypt your templates with AES-256-GCM before they leave your device.
-                    </p>
-                    <button
-                      type="button"
-                      disabled={syncStatus === 'syncing'}
-                      onClick={() => {
-                        setIsOpen(false);
-                        onOpenVaultSetup();
-                      }}
-                      className="w-full h-7 px-2.5 rounded-md border border-[var(--surface-border)] bg-[var(--surface-panel)] hover:bg-[var(--surface-hover)] text-[11.5px] font-medium text-slate-800 dark:text-slate-100 inline-flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
-                    >
-                      <Lock className="w-3 h-3 text-[var(--accent)]" />
-                      <span>Enable E2E Encryption</span>
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  disabled={syncStatus === 'syncing'}
+                  onClick={onSyncNow}
+                  className="w-full h-7 px-2.5 rounded-md border border-[var(--surface-border)] bg-[var(--surface-panel)] hover:bg-[var(--surface-hover)] text-[11.5px] font-medium text-slate-800 dark:text-slate-100 inline-flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
+                >
+                  <RefreshCw
+                    className={`w-3 h-3 ${
+                      syncStatus === 'syncing' ? 'animate-spin' : ''
+                    }`}
+                  />
+                  <span>Sync Now</span>
+                </button>
               </div>
 
               <button
@@ -444,7 +341,7 @@ export function AccountMenu({
                   </button>
 
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                    Protected by Google Sign-In, per-user Firebase rules, and optional AES-256-GCM end-to-end encryption.
+                    Protected by Google Sign-In and per-user Firebase security rules.
                   </p>
                 </>
               )}

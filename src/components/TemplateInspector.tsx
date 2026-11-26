@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Bold,
@@ -12,6 +12,7 @@ import {
   Heading3,
   History,
   Italic,
+  Lightbulb,
   Link2,
   List,
   ListOrdered,
@@ -27,12 +28,20 @@ import {
   TemplateCategory,
 } from '../types/workspace';
 import { extractVariables, markdownToHtml } from '../utils/templateEngine';
+import {
+  generateTemplateSuggestions,
+  isUntitled,
+  normalizeComparisonKey,
+  TemplateSuggestionResult,
+} from '../utils/templateSuggestions';
 import { GhostTagInput } from './GhostTagInput';
+import { SuggestionStrip } from './SuggestionStrip';
 
 interface TemplateInspectorProps {
   template: SnippetTemplate | null;
   tabName: string;
   categories: TemplateCategory[];
+  templatesInTab: SnippetTemplate[];
   availableTags: string[];
   viewMode: InspectorViewMode;
   copiedFormat: CopyFormat | null;
@@ -48,14 +57,17 @@ interface TemplateInspectorProps {
   onCreateTemplate: () => void;
   onOpenCommandPalette: () => void;
   onOpenHistory: () => void;
+  onEditorFocus?: (templateId: string) => void;
   onEditorBlur: () => void;
   onBackToListMobile: () => void;
+  externalSyncVersion?: number;
 }
 
 export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
   template,
   tabName,
   categories,
+  templatesInTab,
   availableTags,
   viewMode,
   copiedFormat,
@@ -68,34 +80,96 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
   onCreateTemplate,
   onOpenCommandPalette,
   onOpenHistory,
+  onEditorFocus,
   onEditorBlur,
   onBackToListMobile,
+  externalSyncVersion = 0,
 }) => {
   const [tagInput, setTagInput] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isAddingInlineCat, setIsAddingInlineCat] = useState(false);
   const [inlineCatName, setInlineCatName] = useState('');
+  const [suggestionResult, setSuggestionResult] =
+    useState<TemplateSuggestionResult | null>(null);
+  const [titleVariantIndex, setTitleVariantIndex] = useState(0);
+  const [draftContent, setDraftContent] = useState(() => template?.content ?? '');
+  const [draftTitle, setDraftTitle] = useState(() => template?.title ?? '');
+  const lastSuggestedContentRef = useRef<string | null>(null);
+  const prevTemplateIdRef = useRef<string | null>(null);
+  const prevShowEditorRef = useRef<boolean>(false);
+  const prevExternalSyncVersionRef = useRef<number>(externalSyncVersion);
 
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const showEditor = viewMode === 'edit' || viewMode === 'split';
+  const showPreview = viewMode === 'preview' || viewMode === 'split';
 
   useEffect(() => {
     setConfirmDelete(false);
     setTagInput('');
     setIsAddingInlineCat(false);
     setInlineCatName('');
-  }, [template?.id]);
+    setSuggestionResult(null);
+    setTitleVariantIndex(0);
+    lastSuggestedContentRef.current = null;
+  }, [template?.id, tabName]);
+
+  // Keep DOM-owned inputs in sync ONLY on template switch, editor mount, or
+  // explicit external updates (Version History restore, backup import, remote
+  // cloud merge) — NEVER during active local typing/pasting/backspacing.
+  useLayoutEffect(() => {
+    const nextId = template?.id ?? null;
+    const nextContent = template?.content ?? '';
+    const nextTitle = template?.title ?? '';
+
+    const switchedTemplate = prevTemplateIdRef.current !== nextId;
+    const editorJustMounted = showEditor && !prevShowEditorRef.current;
+    const externalSyncChanged =
+      prevExternalSyncVersionRef.current !== externalSyncVersion;
+
+    prevTemplateIdRef.current = nextId;
+    prevShowEditorRef.current = showEditor;
+    prevExternalSyncVersionRef.current = externalSyncVersion;
+
+    if (!switchedTemplate && !editorJustMounted && !externalSyncChanged) {
+      return;
+    }
+
+    const textareaEl = textareaRef.current;
+    const isTextareaFocused =
+      textareaEl !== null && document.activeElement === textareaEl;
+
+    if (switchedTemplate || editorJustMounted || !isTextareaFocused) {
+      if (textareaEl && textareaEl.value !== nextContent) {
+        textareaEl.value = nextContent;
+      }
+      setDraftContent(nextContent);
+    }
+
+    const titleEl = titleInputRef.current;
+    const isTitleFocused =
+      titleEl !== null && document.activeElement === titleEl;
+
+    if (switchedTemplate || editorJustMounted || !isTitleFocused) {
+      if (titleEl && titleEl.value !== nextTitle) {
+        titleEl.value = nextTitle;
+      }
+      setDraftTitle(nextTitle);
+    }
+  }, [template?.id, template?.content, template?.title, showEditor, externalSyncVersion]);
 
   const detectedVariables = useMemo(
-    () => (template ? extractVariables(template.content) : []),
-    [template?.content]
+    () => (template ? extractVariables(draftContent) : []),
+    [template?.id, draftContent]
   );
 
   const renderedPreviewHtml = useMemo(
     () =>
       template
-        ? markdownToHtml(template.content, { highlightVariables: true })
+        ? markdownToHtml(draftContent, { highlightVariables: true })
         : '',
-    [template?.content]
+    [template?.id, draftContent]
   );
 
   if (!template) {
@@ -145,25 +219,25 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
 
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    const current = template.content;
+    const current = el.value;
     const selected = current.slice(start, end) || placeholder;
     const nextContent =
       current.slice(0, start) + prefix + selected + suffix + current.slice(end);
 
+    el.value = nextContent;
+    setDraftContent(nextContent);
     onUpdateTemplate(template.id, { content: nextContent });
 
-    requestAnimationFrame(() => {
-      el.focus();
-      if (selectInserted) {
-        el.setSelectionRange(
-          start + prefix.length,
-          start + prefix.length + selected.length
-        );
-      } else {
-        const cursor = start + prefix.length + selected.length + suffix.length;
-        el.setSelectionRange(cursor, cursor);
-      }
-    });
+    el.focus();
+    if (selectInserted) {
+      el.setSelectionRange(
+        start + prefix.length,
+        start + prefix.length + selected.length
+      );
+    } else {
+      const cursor = start + prefix.length + selected.length + suffix.length;
+      el.setSelectionRange(cursor, cursor);
+    }
   };
 
   const insertLinePrefix = (linePrefix: string) => {
@@ -172,7 +246,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
 
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    const current = template.content;
+    const current = el.value;
 
     const lineStart = current.lastIndexOf('\n', start - 1) + 1;
     const nextNewline = current.indexOf('\n', end);
@@ -186,12 +260,12 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
 
     const nextContent =
       current.slice(0, lineStart) + updatedBlock + current.slice(lineEnd);
+    el.value = nextContent;
+    setDraftContent(nextContent);
     onUpdateTemplate(template.id, { content: nextContent });
 
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(lineStart, lineStart + updatedBlock.length);
-    });
+    el.focus();
+    el.setSelectionRange(lineStart, lineStart + updatedBlock.length);
   };
 
   const handleAddTag = (raw: string) => {
@@ -222,13 +296,139 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
     setIsAddingInlineCat(false);
   };
 
+  const runLocalSuggester = () => {
+    const next = generateTemplateSuggestions({
+      template: { ...template, title: draftTitle, content: draftContent },
+      categories,
+      templatesInTab,
+      availableTags,
+    });
+    lastSuggestedContentRef.current = draftContent;
+    setSuggestionResult(next);
+    setTitleVariantIndex(0);
+  };
+
+  const handleToggleSuggest = () => {
+    if (
+      suggestionResult !== null &&
+      lastSuggestedContentRef.current === draftContent
+    ) {
+      setSuggestionResult(null);
+      return;
+    }
+    runLocalSuggester();
+  };
+
+  const handleRefreshSuggestions = () => {
+    const next = generateTemplateSuggestions({
+      template: { ...template, title: draftTitle, content: draftContent },
+      categories,
+      templatesInTab,
+      availableTags,
+    });
+    const sameTitles =
+      suggestionResult !== null &&
+      next.titles.length > 1 &&
+      suggestionResult.titles.length === next.titles.length &&
+      suggestionResult.titles.every((t, idx) => t === next.titles[idx]);
+
+    lastSuggestedContentRef.current = draftContent;
+    setSuggestionResult(next);
+    setTitleVariantIndex((prev) => (sameTitles ? prev + 1 : 0));
+  };
+
+  const handleApplySuggestedTitle = (title: string) => {
+    if (titleInputRef.current) {
+      titleInputRef.current.value = title;
+    }
+    setDraftTitle(title);
+    onUpdateTemplate(template.id, { title });
+  };
+
+  const handleApplySuggestedExistingCategory = (categoryId: string) => {
+    onUpdateTemplate(template.id, { categoryId });
+  };
+
+  const handleCreateAndApplySuggestedCategory = (categoryName: string) => {
+    const existing = categories.find(
+      (c) => normalizeComparisonKey(c.name) === normalizeComparisonKey(categoryName)
+    );
+    const targetId = existing ? existing.id : onCreateCategoryInline(categoryName);
+    if (targetId) {
+      onUpdateTemplate(template.id, { categoryId: targetId });
+    }
+  };
+
+  const handleApplySuggestedTag = (tag: string) => {
+    const clean = tag.trim().toLowerCase().replace(/^#+/, '');
+    if (!clean) return;
+    const key = normalizeComparisonKey(clean);
+    const alreadyExists = template.tags.some(
+      (existing) => normalizeComparisonKey(existing) === key
+    );
+    if (alreadyExists) return;
+    onUpdateTemplate(template.id, { tags: [...template.tags, clean] });
+  };
+
+  const handleApplyAllSuggestions = () => {
+    if (!suggestionResult || suggestionResult.status !== 'ready') return;
+    const patch: Partial<Pick<SnippetTemplate, 'title' | 'categoryId' | 'tags'>> = {};
+
+    // Apply short title only if the template is still untitled
+    if (isUntitled(draftTitle) && suggestionResult.titles.length > 0) {
+      const nextTitle =
+        suggestionResult.titles[titleVariantIndex % suggestionResult.titles.length];
+      patch.title = nextTitle;
+      if (titleInputRef.current) {
+        titleInputRef.current.value = nextTitle;
+      }
+      setDraftTitle(nextTitle);
+    }
+
+    // Assign top suggested category only if template is currently unassigned
+    if (!template.categoryId && suggestionResult.categories.length > 0) {
+      const topCat = suggestionResult.categories[0];
+      if (topCat.kind === 'existing' && topCat.id) {
+        patch.categoryId = topCat.id;
+      } else {
+        const existing = categories.find(
+          (c) =>
+            normalizeComparisonKey(c.name) === normalizeComparisonKey(topCat.name)
+        );
+        const createdId = existing
+          ? existing.id
+          : onCreateCategoryInline(topCat.name);
+        if (createdId) {
+          patch.categoryId = createdId;
+        }
+      }
+    }
+
+    // Merge all non-duplicate suggested tags
+    const currentKeys = new Set(
+      template.tags.map((t) => normalizeComparisonKey(t))
+    );
+    const nextTags = [...template.tags];
+    for (const item of suggestionResult.tags) {
+      const key = normalizeComparisonKey(item.tag);
+      if (!currentKeys.has(key)) {
+        currentKeys.add(key);
+        nextTags.push(item.tag);
+      }
+    }
+    if (nextTags.length > template.tags.length) {
+      patch.tags = nextTags;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      onUpdateTemplate(template.id, patch);
+    }
+  };
+
   const updatedLabel = new Date(template.updatedAt).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
   });
-
-  const showEditor = viewMode === 'edit' || viewMode === 'split';
-  const showPreview = viewMode === 'preview' || viewMode === 'split';
 
   return (
     <main className="flex-1 min-w-0 h-full flex flex-col bg-[var(--surface-panel)]">
@@ -406,11 +606,15 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
             {/* Title, Category & Tag Metadata Inputs */}
             <div className="p-4 border-b border-[var(--surface-border)] space-y-3">
               <input
+                ref={titleInputRef}
                 type="text"
-                value={template.title}
-                onChange={(e) =>
-                  onUpdateTemplate(template.id, { title: e.target.value })
-                }
+                onFocus={() => onEditorFocus?.(template.id)}
+                onBlur={onEditorBlur}
+                onChange={(e) => {
+                  const nextTitle = e.target.value;
+                  setDraftTitle(nextTitle);
+                  onUpdateTemplate(template.id, { title: nextTitle });
+                }}
                 placeholder="Template title..."
                 aria-label="Template title"
                 className="w-full font-display text-lg font-semibold bg-transparent text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
@@ -537,6 +741,25 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
               </div>
             </div>
 
+            {/* On-Demand Local Smart Suggestions Strip */}
+            {suggestionResult && (
+              <SuggestionStrip
+                result={suggestionResult}
+                currentTitle={draftTitle}
+                currentCategoryId={template.categoryId}
+                currentTags={template.tags}
+                categories={categories}
+                titleVariantIndex={titleVariantIndex}
+                onApplyTitle={handleApplySuggestedTitle}
+                onApplyExistingCategory={handleApplySuggestedExistingCategory}
+                onCreateAndApplyCategory={handleCreateAndApplySuggestedCategory}
+                onApplyTag={handleApplySuggestedTag}
+                onApplyAll={handleApplyAllSuggestions}
+                onRefresh={handleRefreshSuggestions}
+                onDismiss={() => setSuggestionResult(null)}
+              />
+            )}
+
             {/* Formatting Toolbar */}
             <div className="px-3 py-1.5 border-b border-[var(--surface-border)] bg-[var(--surface-sidebar)] flex items-center flex-wrap gap-1">
               <ToolbarButton
@@ -600,16 +823,32 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                 <Braces className="w-3.5 h-3.5" />
                 <span>Insert {'{{var}}'}</span>
               </button>
+              <button
+                type="button"
+                onClick={handleToggleSuggest}
+                aria-pressed={suggestionResult !== null}
+                title="Suggest a short title, category, and tags offline from this template"
+                className={`ml-auto flex items-center gap-1.5 h-7 px-2.5 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  suggestionResult !== null
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)] hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Lightbulb className="w-3.5 h-3.5" />
+                <span>Suggest</span>
+              </button>
             </div>
 
-            {/* Markdown Body Textarea */}
+            {/* Markdown Body Textarea (DOM-owned to prevent cursor jumps) */}
             <div className="flex-1 min-h-0 flex flex-col">
               <textarea
                 ref={textareaRef}
-                value={template.content}
-                onChange={(e) =>
-                  onUpdateTemplate(template.id, { content: e.target.value })
-                }
+                onFocus={() => onEditorFocus?.(template.id)}
+                onChange={(e) => {
+                  const nextContent = e.target.value;
+                  setDraftContent(nextContent);
+                  onUpdateTemplate(template.id, { content: nextContent });
+                }}
                 onBlur={onEditorBlur}
                 onKeyDown={(e) => {
                   if (e.key === 'Tab') {
@@ -630,7 +869,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
                   placeholders
                 </span>
                 <span className="font-mono tabular-nums">
-                  {template.content.length} chars
+                  {draftContent.length} chars
                 </span>
               </div>
             </div>
@@ -694,7 +933,7 @@ export const TemplateInspector: React.FC<TemplateInspectorProps> = ({
               )}
 
               {/* Rendered Rich Output */}
-              {template.content.trim() ? (
+              {draftContent.trim() ? (
                 <div
                   className="template-prose text-slate-800 dark:text-slate-200"
                   dangerouslySetInnerHTML={{ __html: renderedPreviewHtml }}

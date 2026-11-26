@@ -73,7 +73,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setImportError(null);
     setParsedPreview(null);
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
 
     try {
@@ -84,6 +85,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       setImportError(
         err instanceof Error ? err.message : 'Unable to read backup file.'
       );
+    } finally {
+      input.value = '';
     }
   };
 

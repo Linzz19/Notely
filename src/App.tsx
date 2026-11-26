@@ -12,7 +12,6 @@ import { TemplateListPane } from './components/TemplateListPane';
 import { ToastContainer } from './components/ToastContainer';
 import { TopTabBar } from './components/TopTabBar';
 import { UpdateBanner } from './components/UpdateBanner';
-import { VaultModal, VaultModalMode } from './components/VaultModal';
 import { VersionHistoryModal } from './components/VersionHistoryModal';
 import { createStarterWorkspace } from './data/starterWorkspace';
 import {
@@ -40,16 +39,15 @@ import {
   WorkspaceTab,
 } from './types/workspace';
 import {
-  CloudEncryptionConfig,
   CloudWorkspaceSnapshot,
   combineLocalAndCloudWorkspaces,
   fetchCloudWorkspace,
   hasCustomLocalContent,
+  isRemoteSnapshotEquivalentToLocal,
   mergeSnapshotIntoLocalWorkspace,
   subscribeToCloudWorkspace,
   syncWorkspaceDiffToCloud,
 } from './utils/cloudSync';
-import { createVaultConfig, unlockVaultKey } from './utils/crypto';
 import {
   loadDesktopWorkspace,
   loadWorkspace,
@@ -127,18 +125,11 @@ export default function App() {
     uid: string;
     cloudSnapshot: CloudWorkspaceSnapshot;
   } | null>(null);
-  const [encryptionConfig, setEncryptionConfig] =
-    useState<CloudEncryptionConfig>({
-      enabled: false,
-      salt: '',
-      verifier: '',
-    });
-  const [isVaultUnlocked, setIsVaultUnlocked] = useState(false);
-  const [vaultModalMode, setVaultModalMode] = useState<VaultModalMode | null>(
-    null
-  );
-  const [vaultBusy, setVaultBusy] = useState(false);
-  const [vaultError, setVaultError] = useState<string | null>(null);
+
+  const [externalSyncVersion, setExternalSyncVersion] = useState(0);
+  const bumpExternalSyncVersion = useCallback(() => {
+    setExternalSyncVersion((v) => v + 1);
+  }, []);
 
   const desktopHydratedRef = useRef(!isDesktopApp);
   const desktopHydrationResolveRef = useRef<(() => void) | null>(null);
@@ -151,11 +142,23 @@ export default function App() {
   );
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
-  const encryptionKeyRef = useRef<CryptoKey | null>(null);
-  const encryptionConfigRef = useRef(encryptionConfig);
-  encryptionConfigRef.current = encryptionConfig;
+  const authUserRef = useRef<User | null>(authUser);
+  authUserRef.current = authUser;
+  const inspectorModeRef = useRef<InspectorViewMode>(inspectorMode);
+  inspectorModeRef.current = inspectorMode;
+  const selectedTemplateIdRef = useRef<string | null>(selectedTemplateId);
+  selectedTemplateIdRef.current = selectedTemplateId;
   const cloudReadyRef = useRef(false);
-  const isApplyingRemoteRef = useRef(false);
+  const lastRemoteAppliedWorkspaceRef = useRef<WorkspaceData | null>(null);
+  const localChangeVersionRef = useRef(0);
+  const lastSyncedVersionRef = useRef(0);
+  const syncInFlightRef = useRef(false);
+  const needsResyncRef = useRef(false);
+  const dirtyTemplateVersionsRef = useRef<Map<string, number>>(new Map());
+  const recentlyEditedUntilRef = useRef<Map<string, number>>(new Map());
+  const recentlyDeletedUntilRef = useRef<Map<string, number>>(new Map());
+  const activeEditorTemplateIdRef = useRef<string | null>(null);
+  const lastLocalEditAtRef = useRef(0);
   const lastCloudSnapshotRef = useRef<CloudWorkspaceSnapshot | null>(null);
   const cloudUnsubRef = useRef<(() => void) | null>(null);
   const syncTimerRef = useRef<number | null>(null);
@@ -178,6 +181,7 @@ export default function App() {
             (t) => t.tabId === diskData.activeTabId
           );
           setSelectedTemplateId(firstInTab?.id ?? null);
+          bumpExternalSyncVersion();
         }
       })
       .finally(() => {
@@ -234,11 +238,29 @@ export default function App() {
     };
   }, []);
 
-  // Persist workspace to AppData (Electron) and localStorage
+  // Persist workspace to AppData (Electron) and localStorage (debounced during rapid typing, flushed on unload)
   useEffect(() => {
     if (!desktopHydratedRef.current) return;
-    saveWorkspace(workspace);
+    const timer = window.setTimeout(() => {
+      saveWorkspace(workspaceRef.current);
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [workspace]);
+
+  useEffect(() => {
+    const flushDiskSave = () => {
+      if (!desktopHydratedRef.current) return;
+      saveWorkspace(workspaceRef.current);
+    };
+    window.addEventListener('beforeunload', flushDiskSave);
+    window.addEventListener('pagehide', flushDiskSave);
+    return () => {
+      window.removeEventListener('beforeunload', flushDiskSave);
+      window.removeEventListener('pagehide', flushDiskSave);
+    };
+  }, []);
 
   // Sync theme mode, surface preset, computed accent CSS variables, and Windows 11 titlebar overlay
   useEffect(() => {
@@ -271,55 +293,196 @@ export default function App() {
     []
   );
 
-  const startLiveCloudSubscription = useCallback((uid: string) => {
-    cloudUnsubRef.current?.();
-    cloudUnsubRef.current = subscribeToCloudWorkspace(
-      uid,
-      () => encryptionKeyRef.current,
-      (remoteSnapshot) => {
-        if (!remoteSnapshot.exists) return;
+  const getProtectedTemplateIds = useCallback((): Set<string> => {
+    const now = Date.now();
+    const ids = new Set<string>(dirtyTemplateVersionsRef.current.keys());
+    if (activeEditorTemplateIdRef.current) {
+      ids.add(activeEditorTemplateIdRef.current);
+    }
+    if (
+      inspectorModeRef.current !== 'preview' &&
+      selectedTemplateIdRef.current
+    ) {
+      ids.add(selectedTemplateIdRef.current);
+    }
+    for (const [tplId, until] of recentlyEditedUntilRef.current.entries()) {
+      if (until > now) {
+        ids.add(tplId);
+      } else {
+        recentlyEditedUntilRef.current.delete(tplId);
+      }
+    }
+    return ids;
+  }, []);
 
-        if (remoteSnapshot.settings) {
-          const nextEnc: CloudEncryptionConfig = {
-            enabled: remoteSnapshot.settings.encryptionEnabled,
-            salt: remoteSnapshot.settings.encryptionSalt,
-            verifier: remoteSnapshot.settings.encryptionVerifier,
-          };
-          setEncryptionConfig(nextEnc);
-          encryptionConfigRef.current = nextEnc;
+  const getExcludedTemplateIds = useCallback((): Set<string> => {
+    const now = Date.now();
+    const ids = new Set<string>();
+    for (const [tplId, until] of recentlyDeletedUntilRef.current.entries()) {
+      if (until > now) {
+        ids.add(tplId);
+      } else {
+        recentlyDeletedUntilRef.current.delete(tplId);
+      }
+    }
+    return ids;
+  }, []);
+
+  const markLocalTemplateMutation = useCallback((templateId: string) => {
+    const now = Date.now();
+    const nextVersion = localChangeVersionRef.current + 1;
+    localChangeVersionRef.current = nextVersion;
+    lastLocalEditAtRef.current = now;
+    dirtyTemplateVersionsRef.current.set(templateId, nextVersion);
+    recentlyEditedUntilRef.current.set(templateId, now + 15000);
+    recentlyDeletedUntilRef.current.delete(templateId);
+  }, []);
+
+  const markLocalTemplateDeletion = useCallback((templateId: string) => {
+    const now = Date.now();
+    const nextVersion = localChangeVersionRef.current + 1;
+    localChangeVersionRef.current = nextVersion;
+    lastLocalEditAtRef.current = now;
+    dirtyTemplateVersionsRef.current.delete(templateId);
+    recentlyEditedUntilRef.current.delete(templateId);
+    recentlyDeletedUntilRef.current.set(templateId, now + 15000);
+  }, []);
+
+  const flushCloudSync = useCallback(async (uid: string): Promise<boolean> => {
+    if (!cloudReadyRef.current || authUserRef.current?.uid !== uid) {
+      return false;
+    }
+    if (syncInFlightRef.current) {
+      needsResyncRef.current = true;
+      return false;
+    }
+
+    syncInFlightRef.current = true;
+    let succeeded = false;
+    const targetVersion = localChangeVersionRef.current;
+    const snapshotToPush = workspaceRef.current;
+    setCloudSyncStatus('syncing');
+
+    try {
+      const nextSnapshot = await syncWorkspaceDiffToCloud(
+        uid,
+        snapshotToPush,
+        lastCloudSnapshotRef.current
+      );
+      if (authUserRef.current?.uid !== uid) return false;
+
+      succeeded = true;
+      lastCloudSnapshotRef.current = nextSnapshot;
+      lastSyncedVersionRef.current = Math.max(
+        lastSyncedVersionRef.current,
+        targetVersion
+      );
+
+      for (const [tplId, dirtyVer] of dirtyTemplateVersionsRef.current.entries()) {
+        if (dirtyVer <= targetVersion) {
+          dirtyTemplateVersionsRef.current.delete(tplId);
         }
+      }
 
-        if (remoteSnapshot.requiresUnlock) {
-          cloudReadyRef.current = false;
-          setIsVaultUnlocked(false);
-          setCloudSyncStatus('locked');
-          setVaultError(null);
-          setVaultModalMode('unlock');
-          return;
-        }
-
-        lastCloudSnapshotRef.current = remoteSnapshot;
-        isApplyingRemoteRef.current = true;
-        setWorkspace((prev) =>
-          mergeSnapshotIntoLocalWorkspace(prev, remoteSnapshot)
-        );
-        window.setTimeout(() => {
-          isApplyingRemoteRef.current = false;
-        }, 50);
+      if (localChangeVersionRef.current === targetVersion) {
         setCloudSyncStatus('synced');
         setCloudSyncError(null);
         setLastSyncedAt(new Date().toISOString());
-      },
-      (err) => {
-        setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
-        setCloudSyncError(
-          err.message.includes('Quota exceeded')
-            ? 'Daily Firestore free quota reached. Resets tomorrow.'
-            : 'Unable to sync changes right now.'
-        );
       }
-    );
+      return true;
+    } catch (err) {
+      if (authUserRef.current?.uid !== uid) return false;
+      const msg = err instanceof Error ? err.message : String(err);
+      setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
+      setCloudSyncError(
+        msg.includes('Quota exceeded')
+          ? 'Daily Firestore free quota reached. Resets tomorrow.'
+          : 'Changes saved locally — cloud sync will retry.'
+      );
+      return false;
+    } finally {
+      syncInFlightRef.current = false;
+      const hasMoreLocalChanges =
+        needsResyncRef.current ||
+        localChangeVersionRef.current > lastSyncedVersionRef.current;
+      if (
+        succeeded &&
+        hasMoreLocalChanges &&
+        cloudReadyRef.current &&
+        authUserRef.current?.uid === uid &&
+        syncTimerRef.current === null
+      ) {
+        needsResyncRef.current = false;
+        syncTimerRef.current = window.setTimeout(() => {
+          syncTimerRef.current = null;
+          void flushCloudSync(uid);
+        }, 400);
+      } else {
+        needsResyncRef.current = false;
+      }
+    }
   }, []);
+
+  const startLiveCloudSubscription = useCallback(
+    (uid: string) => {
+      cloudUnsubRef.current?.();
+      cloudUnsubRef.current = subscribeToCloudWorkspace(
+        uid,
+        (remoteSnapshot) => {
+          if (!remoteSnapshot.exists) return;
+
+          // Never overwrite local workspace with stale Firestore server echoes
+          // while local edits are queued, debouncing, committing, or recently typed.
+          if (
+            syncInFlightRef.current ||
+            syncTimerRef.current !== null ||
+            dirtyTemplateVersionsRef.current.size > 0 ||
+            localChangeVersionRef.current > lastSyncedVersionRef.current ||
+            Date.now() - lastLocalEditAtRef.current < 4000
+          ) {
+            return;
+          }
+
+          // Ignore redundant server echoes that already match our local state
+          // so active textareas never re-sync or lose cursor position.
+          if (
+            isRemoteSnapshotEquivalentToLocal(workspaceRef.current, remoteSnapshot)
+          ) {
+            lastCloudSnapshotRef.current = remoteSnapshot;
+            setCloudSyncStatus('synced');
+            setCloudSyncError(null);
+            setLastSyncedAt(new Date().toISOString());
+            return;
+          }
+
+          lastCloudSnapshotRef.current = remoteSnapshot;
+          const protectedIds = getProtectedTemplateIds();
+          const excludedIds = getExcludedTemplateIds();
+          setWorkspace((prev) => {
+            const next = mergeSnapshotIntoLocalWorkspace(prev, remoteSnapshot, {
+              protectedTemplateIds: protectedIds,
+              excludedTemplateIds: excludedIds,
+            });
+            lastRemoteAppliedWorkspaceRef.current = next;
+            return next;
+          });
+          bumpExternalSyncVersion();
+          setCloudSyncStatus('synced');
+          setCloudSyncError(null);
+          setLastSyncedAt(new Date().toISOString());
+        },
+        (err) => {
+          setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
+          setCloudSyncError(
+            err.message.includes('Quota exceeded')
+              ? 'Daily Firestore free quota reached. Resets tomorrow.'
+              : 'Unable to sync changes right now.'
+          );
+        }
+      );
+    },
+    [getProtectedTemplateIds, getExcludedTemplateIds, bumpExternalSyncVersion]
+  );
 
   // Listen to Firebase Auth state and bootstrap cloud sync cleanly
   useEffect(() => {
@@ -330,7 +493,7 @@ export default function App() {
       setAuthUser(user);
       setAuthLoading(false);
 
-      // Tear down previous sync session and wipe any in-memory E2EE key
+      // Tear down previous sync session
       cloudUnsubRef.current?.();
       cloudUnsubRef.current = null;
       if (syncTimerRef.current) {
@@ -338,18 +501,9 @@ export default function App() {
         syncTimerRef.current = null;
       }
       cloudReadyRef.current = false;
+      syncInFlightRef.current = false;
+      needsResyncRef.current = false;
       lastCloudSnapshotRef.current = null;
-      encryptionKeyRef.current = null;
-      const emptyEnc: CloudEncryptionConfig = {
-        enabled: false,
-        salt: '',
-        verifier: '',
-      };
-      encryptionConfigRef.current = emptyEnc;
-      setEncryptionConfig(emptyEnc);
-      setIsVaultUnlocked(false);
-      setVaultModalMode(null);
-      setVaultError(null);
       setPendingCloudConflict(null);
 
       if (!user) {
@@ -366,48 +520,29 @@ export default function App() {
         try {
           await desktopHydrationPromiseRef.current;
           if (cancelled) return;
-          const cloudSnapshot = await fetchCloudWorkspace(
-            user.uid,
-            encryptionKeyRef.current
-          );
+          const cloudSnapshot = await fetchCloudWorkspace(user.uid);
           if (cancelled) return;
 
           if (!cloudSnapshot.exists) {
             // Brand-new cloud account: upload local workspace automatically
+            const versionAtStart = localChangeVersionRef.current;
             const uploaded = await syncWorkspaceDiffToCloud(
               user.uid,
               workspaceRef.current,
-              null,
-              {
-                encryptionKey: encryptionKeyRef.current,
-                encryptionConfig: encryptionConfigRef.current,
-              }
+              null
             );
             if (cancelled) return;
             lastCloudSnapshotRef.current = uploaded;
+            lastSyncedVersionRef.current = versionAtStart;
+            for (const [tplId, dirtyVer] of dirtyTemplateVersionsRef.current.entries()) {
+              if (dirtyVer <= versionAtStart) {
+                dirtyTemplateVersionsRef.current.delete(tplId);
+              }
+            }
             cloudReadyRef.current = true;
             setCloudSyncStatus('synced');
             setLastSyncedAt(new Date().toISOString());
             startLiveCloudSubscription(user.uid);
-            return;
-          }
-
-          if (cloudSnapshot.settings) {
-            const remoteEnc: CloudEncryptionConfig = {
-              enabled: cloudSnapshot.settings.encryptionEnabled,
-              salt: cloudSnapshot.settings.encryptionSalt,
-              verifier: cloudSnapshot.settings.encryptionVerifier,
-            };
-            encryptionConfigRef.current = remoteEnc;
-            setEncryptionConfig(remoteEnc);
-          }
-
-          // If cloud workspace uses AES-256-GCM E2EE, pause and prompt for passphrase
-          if (cloudSnapshot.requiresUnlock) {
-            setIsVaultUnlocked(false);
-            setCloudSyncStatus('locked');
-            setVaultError(null);
-            setVaultModalMode('unlock');
             return;
           }
 
@@ -426,17 +561,33 @@ export default function App() {
 
           // Apply cloud workspace smoothly and start live sync
           lastCloudSnapshotRef.current = cloudSnapshot;
-          isApplyingRemoteRef.current = true;
-          setWorkspace((prev) =>
-            mergeSnapshotIntoLocalWorkspace(prev, cloudSnapshot)
-          );
-          window.setTimeout(() => {
-            isApplyingRemoteRef.current = false;
-          }, 50);
+          const protectedIds = getProtectedTemplateIds();
+          const excludedIds = getExcludedTemplateIds();
+          setWorkspace((prev) => {
+            const next = mergeSnapshotIntoLocalWorkspace(prev, cloudSnapshot, {
+              protectedTemplateIds: protectedIds,
+              excludedTemplateIds: excludedIds,
+            });
+            lastRemoteAppliedWorkspaceRef.current = next;
+            return next;
+          });
+          bumpExternalSyncVersion();
+          const hasPendingPreReadyEdits =
+            dirtyTemplateVersionsRef.current.size > 0 ||
+            localChangeVersionRef.current > lastSyncedVersionRef.current;
+          if (!hasPendingPreReadyEdits) {
+            lastSyncedVersionRef.current = localChangeVersionRef.current;
+          }
           cloudReadyRef.current = true;
-          setCloudSyncStatus('synced');
+          setCloudSyncStatus(hasPendingPreReadyEdits ? 'syncing' : 'synced');
           setLastSyncedAt(new Date().toISOString());
           startLiveCloudSubscription(user.uid);
+          if (hasPendingPreReadyEdits) {
+            syncTimerRef.current = window.setTimeout(() => {
+              syncTimerRef.current = null;
+              void flushCloudSync(user.uid);
+            }, 500);
+          }
         } catch (err) {
           if (cancelled) return;
           const msg = err instanceof Error ? err.message : String(err);
@@ -460,46 +611,34 @@ export default function App() {
         window.clearTimeout(syncTimerRef.current);
       }
     };
-  }, [startLiveCloudSubscription]);
+  }, [
+    startLiveCloudSubscription,
+    getProtectedTemplateIds,
+    getExcludedTemplateIds,
+    flushCloudSync,
+    bumpExternalSyncVersion,
+  ]);
 
   // Debounced minimal-diff push to Firebase whenever local workspace changes
   useEffect(() => {
-    if (!authUser || !cloudReadyRef.current || isApplyingRemoteRef.current) {
+    if (!authUser || !cloudReadyRef.current) {
       return;
     }
+    if (workspace === lastRemoteAppliedWorkspaceRef.current) {
+      return;
+    }
+
+    localChangeVersionRef.current += 1;
 
     if (syncTimerRef.current) {
       window.clearTimeout(syncTimerRef.current);
     }
 
     setCloudSyncStatus('syncing');
+    const uid = authUser.uid;
     syncTimerRef.current = window.setTimeout(() => {
       syncTimerRef.current = null;
-      const uid = authUser.uid;
-      void syncWorkspaceDiffToCloud(
-        uid,
-        workspaceRef.current,
-        lastCloudSnapshotRef.current,
-        {
-          encryptionKey: encryptionKeyRef.current,
-          encryptionConfig: encryptionConfigRef.current,
-        }
-      )
-        .then((nextSnapshot) => {
-          lastCloudSnapshotRef.current = nextSnapshot;
-          setCloudSyncStatus('synced');
-          setCloudSyncError(null);
-          setLastSyncedAt(new Date().toISOString());
-        })
-        .catch((err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
-          setCloudSyncError(
-            msg.includes('Quota exceeded')
-              ? 'Daily Firestore free quota reached. Resets tomorrow.'
-              : 'Changes saved locally — cloud sync will retry.'
-          );
-        });
+      void flushCloudSync(uid);
     }, 900);
 
     return () => {
@@ -508,7 +647,7 @@ export default function App() {
         syncTimerRef.current = null;
       }
     };
-  }, [authUser, workspace]);
+  }, [authUser, workspace, flushCloudSync]);
 
   // Track browser/desktop offline & online transitions for signed-in users
   useEffect(() => {
@@ -516,25 +655,11 @@ export default function App() {
     const handleOffline = () => setCloudSyncStatus('offline');
     const handleOnline = () => {
       if (!cloudReadyRef.current) return;
-      setCloudSyncStatus('syncing');
-      void syncWorkspaceDiffToCloud(
-        authUser.uid,
-        workspaceRef.current,
-        lastCloudSnapshotRef.current,
-        {
-          encryptionKey: encryptionKeyRef.current,
-          encryptionConfig: encryptionConfigRef.current,
-        }
-      )
-        .then((nextSnapshot) => {
-          lastCloudSnapshotRef.current = nextSnapshot;
-          setCloudSyncStatus('synced');
-          setCloudSyncError(null);
-          setLastSyncedAt(new Date().toISOString());
-        })
-        .catch(() => {
-          setCloudSyncStatus('error');
-        });
+      if (syncTimerRef.current) {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      void flushCloudSync(authUser.uid);
     };
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
@@ -542,7 +667,7 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('online', handleOnline);
     };
-  }, [authUser]);
+  }, [authUser, flushCloudSync]);
 
   const handleSignInGoogle = useCallback(async () => {
     const requestId = ++signInRequestIdRef.current;
@@ -598,7 +723,6 @@ export default function App() {
 
   const handleSignOutGoogle = useCallback(async () => {
     try {
-      encryptionKeyRef.current = null;
       await signOutAccount();
       pushToast('Signed out', 'info', 'Your templates remain saved locally.');
     } catch {
@@ -608,175 +732,18 @@ export default function App() {
 
   const handleManualCloudSync = useCallback(async () => {
     if (!authUser || !cloudReadyRef.current) return;
-    setCloudSyncStatus('syncing');
+    if (syncTimerRef.current) {
+      window.clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
     setCloudSyncError(null);
-    try {
-      const nextSnapshot = await syncWorkspaceDiffToCloud(
-        authUser.uid,
-        workspaceRef.current,
-        lastCloudSnapshotRef.current,
-        {
-          encryptionKey: encryptionKeyRef.current,
-          encryptionConfig: encryptionConfigRef.current,
-        }
-      );
-      lastCloudSnapshotRef.current = nextSnapshot;
-      setCloudSyncStatus('synced');
-      setLastSyncedAt(new Date().toISOString());
+    const ok = await flushCloudSync(authUser.uid);
+    if (ok) {
       pushToast('Workspace synced to cloud', 'success');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setCloudSyncStatus(navigator.onLine ? 'error' : 'offline');
-      setCloudSyncError(
-        msg.includes('Quota exceeded')
-          ? 'Daily Firestore free quota reached.'
-          : 'Sync failed. Check your connection and try again.'
-      );
+    } else if (!syncInFlightRef.current) {
       pushToast('Cloud sync failed', 'error');
     }
-  }, [authUser, pushToast]);
-
-  const handleVaultSubmitPassphrase = useCallback(
-    async (passphrase: string) => {
-      if (!authUser || !vaultModalMode) return;
-      setVaultBusy(true);
-      setVaultError(null);
-
-      try {
-        if (vaultModalMode === 'setup') {
-          const setup = await createVaultConfig(passphrase);
-          const nextEnc: CloudEncryptionConfig = {
-            enabled: true,
-            salt: setup.salt,
-            verifier: setup.verifier,
-          };
-
-          setCloudSyncStatus('syncing');
-          const synced = await syncWorkspaceDiffToCloud(
-            authUser.uid,
-            workspaceRef.current,
-            lastCloudSnapshotRef.current,
-            {
-              encryptionKey: setup.key,
-              encryptionConfig: nextEnc,
-              forceReencryptAll: true,
-            }
-          );
-
-          encryptionKeyRef.current = setup.key;
-          encryptionConfigRef.current = nextEnc;
-          setEncryptionConfig(nextEnc);
-          setIsVaultUnlocked(true);
-          lastCloudSnapshotRef.current = synced;
-          cloudReadyRef.current = true;
-          setCloudSyncStatus('synced');
-          setLastSyncedAt(new Date().toISOString());
-          setVaultModalMode(null);
-          pushToast(
-            'End-to-end encryption enabled',
-            'success',
-            'All cloud tabs, categories, templates, and tags are now AES-256-GCM encrypted.'
-          );
-          return;
-        }
-
-        if (vaultModalMode === 'unlock') {
-          const currentEnc = encryptionConfigRef.current;
-          const key = await unlockVaultKey(
-            passphrase,
-            currentEnc.salt,
-            currentEnc.verifier
-          );
-          if (!key) {
-            setVaultError('Incorrect passphrase. Please try again.');
-            return;
-          }
-
-          encryptionKeyRef.current = key;
-          setIsVaultUnlocked(true);
-          setCloudSyncStatus('syncing');
-
-          const decryptedSnapshot = await fetchCloudWorkspace(authUser.uid, key);
-          setVaultModalMode(null);
-
-          const localNow = workspaceRef.current;
-          const cloudIds = new Set(decryptedSnapshot.templates.map((t) => t.id));
-          const hasLocalOnlyCustom =
-            hasCustomLocalContent(localNow) &&
-            localNow.templates.some((t) => !cloudIds.has(t.id));
-
-          if (hasLocalOnlyCustom && decryptedSnapshot.templates.length > 0) {
-            setPendingCloudConflict({
-              uid: authUser.uid,
-              cloudSnapshot: decryptedSnapshot,
-            });
-            setCloudSyncStatus('synced');
-            return;
-          }
-
-          lastCloudSnapshotRef.current = decryptedSnapshot;
-          isApplyingRemoteRef.current = true;
-          setWorkspace((prev) =>
-            mergeSnapshotIntoLocalWorkspace(prev, decryptedSnapshot)
-          );
-          window.setTimeout(() => {
-            isApplyingRemoteRef.current = false;
-          }, 50);
-          cloudReadyRef.current = true;
-          setCloudSyncStatus('synced');
-          setLastSyncedAt(new Date().toISOString());
-          startLiveCloudSubscription(authUser.uid);
-          pushToast('Encrypted vault unlocked', 'success');
-        }
-      } catch {
-        setVaultError('Encryption operation failed. Please check your connection and try again.');
-        setCloudSyncStatus('error');
-      } finally {
-        setVaultBusy(false);
-      }
-    },
-    [authUser, vaultModalMode, startLiveCloudSubscription, pushToast]
-  );
-
-  const handleVaultDisableEncryption = useCallback(async () => {
-    if (!authUser || !encryptionKeyRef.current) return;
-    setVaultBusy(true);
-    setVaultError(null);
-    try {
-      const nextEnc: CloudEncryptionConfig = {
-        enabled: false,
-        salt: '',
-        verifier: '',
-      };
-      setCloudSyncStatus('syncing');
-      const synced = await syncWorkspaceDiffToCloud(
-        authUser.uid,
-        workspaceRef.current,
-        lastCloudSnapshotRef.current,
-        {
-          encryptionKey: null,
-          encryptionConfig: nextEnc,
-          forceReencryptAll: true,
-        }
-      );
-
-      encryptionKeyRef.current = null;
-      encryptionConfigRef.current = nextEnc;
-      setEncryptionConfig(nextEnc);
-      setIsVaultUnlocked(false);
-      lastCloudSnapshotRef.current = synced;
-      cloudReadyRef.current = true;
-      setCloudSyncStatus('synced');
-      setLastSyncedAt(new Date().toISOString());
-      setVaultModalMode(null);
-      pushToast('End-to-end encryption turned off', 'info');
-    } catch {
-      setVaultError('Could not update cloud encryption right now.');
-      setCloudSyncStatus('error');
-    } finally {
-      setVaultBusy(false);
-    }
-  }, [authUser, pushToast]);
+  }, [authUser, flushCloudSync, pushToast]);
 
   const resolvePendingCloudConflict = useCallback(
     async (mode: 'merge' | 'cloud' | 'local') => {
@@ -788,13 +755,16 @@ export default function App() {
       try {
         if (mode === 'cloud') {
           lastCloudSnapshotRef.current = cloudSnapshot;
-          isApplyingRemoteRef.current = true;
-          setWorkspace((prev) =>
-            mergeSnapshotIntoLocalWorkspace(prev, cloudSnapshot)
-          );
-          window.setTimeout(() => {
-            isApplyingRemoteRef.current = false;
-          }, 50);
+          dirtyTemplateVersionsRef.current.clear();
+          recentlyEditedUntilRef.current.clear();
+          recentlyDeletedUntilRef.current.clear();
+          setWorkspace((prev) => {
+            const next = mergeSnapshotIntoLocalWorkspace(prev, cloudSnapshot);
+            lastRemoteAppliedWorkspaceRef.current = next;
+            return next;
+          });
+          bumpExternalSyncVersion();
+          lastSyncedVersionRef.current = localChangeVersionRef.current;
           cloudReadyRef.current = true;
           setCloudSyncStatus('synced');
           setLastSyncedAt(new Date().toISOString());
@@ -808,21 +778,16 @@ export default function App() {
             ? combineLocalAndCloudWorkspaces(workspaceRef.current, cloudSnapshot)
             : workspaceRef.current;
 
-        isApplyingRemoteRef.current = true;
+        lastRemoteAppliedWorkspaceRef.current = nextWorkspace;
         setWorkspace(nextWorkspace);
         const synced = await syncWorkspaceDiffToCloud(
           uid,
           nextWorkspace,
-          cloudSnapshot,
-          {
-            encryptionKey: encryptionKeyRef.current,
-            encryptionConfig: encryptionConfigRef.current,
-          }
+          cloudSnapshot
         );
         lastCloudSnapshotRef.current = synced;
-        window.setTimeout(() => {
-          isApplyingRemoteRef.current = false;
-        }, 50);
+        dirtyTemplateVersionsRef.current.clear();
+        lastSyncedVersionRef.current = localChangeVersionRef.current;
         cloudReadyRef.current = true;
         setCloudSyncStatus('synced');
         setLastSyncedAt(new Date().toISOString());
@@ -964,6 +929,7 @@ export default function App() {
       }
 
       const now = new Date().toISOString();
+      markLocalTemplateMutation(template.id);
       setWorkspace((prev) => ({
         ...prev,
         templates: prev.templates.map((t) =>
@@ -994,7 +960,7 @@ export default function App() {
       };
       pushToast(labelMap[result.actualFormat], 'success', detailMap[result.actualFormat]);
     },
-    [pushToast]
+    [markLocalTemplateMutation, pushToast]
   );
 
   const handleRequestCopy = useCallback(
@@ -1177,6 +1143,7 @@ export default function App() {
       lastCopiedAt: null,
     };
 
+    markLocalTemplateMutation(newTpl.id);
     setWorkspace((prev) => ({
       ...prev,
       templates: [newTpl, ...prev.templates],
@@ -1184,10 +1151,15 @@ export default function App() {
     setSelectedTemplateId(newTpl.id);
     setInspectorMode('edit');
     setMobilePane('inspector');
-  }, [activeTab, workspace.activeCategoryId, workspace.activeTag, categoriesInTab]);
+  }, [activeTab, workspace.activeCategoryId, workspace.activeTag, categoriesInTab, markLocalTemplateMutation]);
+
+  const handleEditorFocus = useCallback((templateId: string) => {
+    activeEditorTemplateIdRef.current = templateId;
+  }, []);
 
   const handleEndEditBurst = useCallback(() => {
     editBurstRef.current = null;
+    activeEditorTemplateIdRef.current = null;
   }, []);
 
   const handleUpdateTemplate = useCallback(
@@ -1197,6 +1169,7 @@ export default function App() {
     ) => {
       const nowMs = Date.now();
       const now = new Date(nowMs).toISOString();
+      markLocalTemplateMutation(templateId);
 
       let shouldSnapshot = false;
       if (patch.content !== undefined) {
@@ -1248,6 +1221,7 @@ export default function App() {
     (templateId: string, version: TemplateVersion) => {
       const now = new Date().toISOString();
       editBurstRef.current = null;
+      markLocalTemplateMutation(templateId);
 
       setWorkspace((prev) => ({
         ...prev,
@@ -1275,6 +1249,7 @@ export default function App() {
           };
         }),
       }));
+      bumpExternalSyncVersion();
 
       pushToast(
         'Restored previous version',
@@ -1282,7 +1257,7 @@ export default function App() {
         'Your prior draft was also saved into version history.'
       );
     },
-    [pushToast]
+    [pushToast, markLocalTemplateMutation, bumpExternalSyncVersion]
   );
 
   const handleDuplicateTemplate = useCallback(
@@ -1298,6 +1273,7 @@ export default function App() {
         lastCopiedAt: null,
         history: [],
       };
+      markLocalTemplateMutation(copy.id);
       setWorkspace((prev) => ({
         ...prev,
         templates: [copy, ...prev.templates],
@@ -1305,11 +1281,12 @@ export default function App() {
       setSelectedTemplateId(copy.id);
       pushToast('Template duplicated', 'info');
     },
-    [pushToast]
+    [pushToast, markLocalTemplateMutation]
   );
 
   const handleDeleteTemplate = useCallback(
     (templateId: string) => {
+      markLocalTemplateDeletion(templateId);
       setWorkspace((prev) => ({
         ...prev,
         templates: prev.templates.filter((t) => t.id !== templateId),
@@ -1320,13 +1297,14 @@ export default function App() {
       }
       pushToast('Template deleted', 'info');
     },
-    [selectedTemplateId, pushToast]
+    [selectedTemplateId, pushToast, markLocalTemplateDeletion]
   );
 
   // Single or multi-template bulk actions (from right-click context menu or bulk bar)
   const handleAssignTemplatesCategory = useCallback(
     (templateIds: string[], categoryId: string) => {
       if (templateIds.length === 0) return;
+      for (const id of templateIds) markLocalTemplateMutation(id);
       const idSet = new Set(templateIds);
       const now = new Date().toISOString();
       const targetCatName = categoryId
@@ -1346,7 +1324,7 @@ export default function App() {
         'success'
       );
     },
-    [workspace.categories, pushToast]
+    [workspace.categories, pushToast, markLocalTemplateMutation]
   );
 
   const handleCreateCategoryAndAssign = useCallback(
@@ -1355,6 +1333,7 @@ export default function App() {
       if (!trimmed || templateIds.length === 0) return;
       const newCatId = handleCreateCategory(trimmed);
       if (!newCatId) return;
+      for (const id of templateIds) markLocalTemplateMutation(id);
       const idSet = new Set(templateIds);
       const now = new Date().toISOString();
 
@@ -1371,12 +1350,13 @@ export default function App() {
         'success'
       );
     },
-    [handleCreateCategory, pushToast]
+    [handleCreateCategory, pushToast, markLocalTemplateMutation]
   );
 
   const handleMoveTemplatesToTab = useCallback(
     (templateIds: string[], targetTabId: string) => {
       if (templateIds.length === 0) return;
+      for (const id of templateIds) markLocalTemplateMutation(id);
       const idSet = new Set(templateIds);
       const now = new Date().toISOString();
       const targetTab = workspace.tabs.find((t) => t.id === targetTabId);
@@ -1411,13 +1391,14 @@ export default function App() {
         'success'
       );
     },
-    [workspace.tabs, workspace.categories, selectedTemplateId, pushToast]
+    [workspace.tabs, workspace.categories, selectedTemplateId, pushToast, markLocalTemplateMutation]
   );
 
   const handleAddTagToTemplates = useCallback(
     (templateIds: string[], rawTag: string) => {
       const tag = rawTag.trim().replace(/^#+/, '').toLowerCase();
       if (!tag || templateIds.length === 0) return;
+      for (const id of templateIds) markLocalTemplateMutation(id);
       const idSet = new Set(templateIds);
       const now = new Date().toISOString();
 
@@ -1437,7 +1418,7 @@ export default function App() {
         'success'
       );
     },
-    [pushToast]
+    [pushToast, markLocalTemplateMutation]
   );
 
   const handleDuplicateTemplates = useCallback(
@@ -1450,16 +1431,20 @@ export default function App() {
       setWorkspace((prev) => {
         const copies: SnippetTemplate[] = prev.templates
           .filter((t) => idSet.has(t.id))
-          .map((t, index) => ({
-            ...t,
-            id: singleCopyId && index === 0 ? singleCopyId : createId('tpl'),
-            title: `${t.title} (Copy)`,
-            usageCount: 0,
-            createdAt: now,
-            updatedAt: now,
-            lastCopiedAt: null,
-            history: [],
-          }));
+          .map((t, index) => {
+            const copyId = singleCopyId && index === 0 ? singleCopyId : createId('tpl');
+            markLocalTemplateMutation(copyId);
+            return {
+              ...t,
+              id: copyId,
+              title: `${t.title} (Copy)`,
+              usageCount: 0,
+              createdAt: now,
+              updatedAt: now,
+              lastCopiedAt: null,
+              history: [],
+            };
+          });
         return {
           ...prev,
           templates: [...copies, ...prev.templates],
@@ -1476,12 +1461,13 @@ export default function App() {
         'info'
       );
     },
-    [pushToast]
+    [pushToast, markLocalTemplateMutation]
   );
 
   const handleDeleteTemplates = useCallback(
     (templateIds: string[]) => {
       if (templateIds.length === 0) return;
+      for (const id of templateIds) markLocalTemplateDeletion(id);
       const idSet = new Set(templateIds);
       setWorkspace((prev) => ({
         ...prev,
@@ -1498,7 +1484,7 @@ export default function App() {
         'info'
       );
     },
-    [selectedTemplateId, pushToast]
+    [selectedTemplateId, pushToast, markLocalTemplateDeletion]
   );
 
   const handleEditTemplateFromMenu = useCallback((templateId: string) => {
@@ -1529,9 +1515,10 @@ export default function App() {
       }));
       setSelectedTemplateId(firstTplId);
       setSearchQuery('');
+      bumpExternalSyncVersion();
       pushToast('Workspace restored from backup', 'success');
     },
-    [pushToast]
+    [pushToast, bumpExternalSyncVersion]
   );
 
   const handleImportMerge = useCallback(
@@ -1559,12 +1546,16 @@ export default function App() {
         };
       });
 
-      const newTemplates: SnippetTemplate[] = parsed.templates.map((tpl) => ({
-        ...tpl,
-        id: createId('tpl'),
-        tabId: tabIdMap.get(tpl.tabId) || newTabs[0].id,
-        categoryId: catIdMap.get(tpl.categoryId) || '',
-      }));
+      const newTemplates: SnippetTemplate[] = parsed.templates.map((tpl) => {
+        const freshId = createId('tpl');
+        markLocalTemplateMutation(freshId);
+        return {
+          ...tpl,
+          id: freshId,
+          tabId: tabIdMap.get(tpl.tabId) || newTabs[0].id,
+          categoryId: catIdMap.get(tpl.categoryId) || '',
+        };
+      });
 
       setWorkspace((prev) => ({
         ...prev,
@@ -1580,7 +1571,7 @@ export default function App() {
         'success'
       );
     },
-    [workspace.tabs.length, pushToast]
+    [workspace.tabs.length, pushToast, markLocalTemplateMutation]
   );
 
   const handleResetStarter = useCallback(() => {
@@ -1593,8 +1584,9 @@ export default function App() {
     }));
     setSelectedTemplateId(starter.templates[0]?.id ?? null);
     setSearchQuery('');
+    bumpExternalSyncVersion();
     pushToast('Restored starter workspace', 'info');
-  }, [pushToast]);
+  }, [pushToast, bumpExternalSyncVersion]);
 
   const handleChangeTheme = useCallback((theme: ThemeMode) => {
     setWorkspace((prev) => ({ ...prev, theme }));
@@ -1708,24 +1700,10 @@ export default function App() {
         cloudSyncStatus={cloudSyncStatus}
         lastSyncedAt={lastSyncedAt}
         cloudSyncError={cloudSyncError}
-        encryptionEnabled={encryptionConfig.enabled}
-        encryptionUnlocked={isVaultUnlocked}
         onSignInGoogle={() => void handleSignInGoogle()}
         onCancelSignInGoogle={handleCancelSignInGoogle}
         onSignOutGoogle={() => void handleSignOutGoogle()}
         onSyncNow={() => void handleManualCloudSync()}
-        onOpenVaultSetup={() => {
-          setVaultError(null);
-          setVaultModalMode('setup');
-        }}
-        onOpenVaultUnlock={() => {
-          setVaultError(null);
-          setVaultModalMode('unlock');
-        }}
-        onOpenVaultDisable={() => {
-          setVaultError(null);
-          setVaultModalMode('disable');
-        }}
         onSelectTab={handleSelectTab}
         onCreateTab={handleCreateTab}
         onRenameTab={handleRenameTab}
@@ -1825,6 +1803,7 @@ export default function App() {
             template={selectedTemplate}
             tabName={activeTab?.name ?? 'Workspace'}
             categories={categoriesInTab}
+            templatesInTab={templatesInTab}
             availableTags={activeTabTags}
             viewMode={inspectorMode}
             copiedFormat={copiedInspectorFormat}
@@ -1837,8 +1816,10 @@ export default function App() {
             onCreateTemplate={handleCreateTemplate}
             onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
             onOpenHistory={() => setIsHistoryModalOpen(true)}
+            onEditorFocus={handleEditorFocus}
             onEditorBlur={handleEndEditBurst}
             onBackToListMobile={() => setMobilePane('list')}
+            externalSyncVersion={externalSyncVersion}
           />
         </div>
       </div>
@@ -1928,22 +1909,6 @@ export default function App() {
           onCancel={() => {
             setPendingCloudConflict(null);
             void handleSignOutGoogle();
-          }}
-        />
-      )}
-
-      {/* Zero-Knowledge AES-256-GCM Vault Setup / Unlock Modal */}
-      {vaultModalMode && (
-        <VaultModal
-          mode={vaultModalMode}
-          busy={vaultBusy}
-          error={vaultError}
-          onSubmitPassphrase={(pass) => void handleVaultSubmitPassphrase(pass)}
-          onDisableEncryption={() => void handleVaultDisableEncryption()}
-          onClose={() => {
-            if (vaultBusy) return;
-            setVaultModalMode(null);
-            setVaultError(null);
           }}
         />
       )}

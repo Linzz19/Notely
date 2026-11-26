@@ -20,10 +20,10 @@ import {
   WorkspaceData,
   WorkspaceTab,
 } from '../types/workspace';
-import { decryptString, encryptString, isEncryptedValue } from './crypto';
 import { normalizeAccentColor, normalizeThemePreset } from './theme';
+import { createStarterWorkspace } from '../data/starterWorkspace';
 
-// Blueprint-synchronized validation constants (plaintext limits before optional AES-256-GCM)
+// Blueprint-synchronized validation constants
 const VALID_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
 const MAX_NAME_LEN = 64;
 const MAX_TITLE_LEN = 160;
@@ -34,36 +34,20 @@ const MAX_ORDER = 1000;
 const MAX_USAGE = 1000000;
 const MAX_BATCH_OPS = 400;
 
-export interface CloudEncryptionConfig {
-  enabled: boolean;
-  salt: string;
-  verifier: string;
-}
-
 export interface CloudSettingsRecord {
   theme: ThemeMode;
   themePreset: ThemePreset;
   accentColor: string;
   activeTabId: string;
   sortBy: SortOption;
-  encryptionEnabled: boolean;
-  encryptionSalt: string;
-  encryptionVerifier: string;
 }
 
 export interface CloudWorkspaceSnapshot {
   exists: boolean;
-  requiresUnlock: boolean;
   settings: CloudSettingsRecord | null;
   tabs: WorkspaceTab[];
   categories: TemplateCategory[];
   templates: SnippetTemplate[];
-}
-
-export interface SyncEncryptionOptions {
-  encryptionKey?: CryptoKey | null;
-  encryptionConfig?: CloudEncryptionConfig;
-  forceReencryptAll?: boolean;
 }
 
 function sanitizeId(raw: string, fallbackPrefix: string): string {
@@ -116,10 +100,7 @@ function timestampToIso(val: unknown): string {
   return new Date().toISOString();
 }
 
-function sanitizeSettingsForCloud(
-  workspace: WorkspaceData,
-  encConfig?: CloudEncryptionConfig
-): CloudSettingsRecord {
+function sanitizeSettingsForCloud(workspace: WorkspaceData): CloudSettingsRecord {
   const theme: ThemeMode = workspace.theme === 'dark' ? 'dark' : 'light';
   const themePreset: ThemePreset = normalizeThemePreset(workspace.themePreset);
   const accentColor = normalizeAccentColor(workspace.accentColor);
@@ -129,19 +110,12 @@ function sanitizeSettingsForCloud(
       : 'updated';
   const activeTabId = sanitizeOptionalId(workspace.activeTabId);
 
-  const encryptionEnabled = Boolean(encConfig?.enabled && encConfig.salt && encConfig.verifier);
-  const encryptionSalt = encryptionEnabled ? encConfig!.salt.slice(0, 64) : '';
-  const encryptionVerifier = encryptionEnabled ? encConfig!.verifier.slice(0, 256) : '';
-
   return {
     theme,
     themePreset,
     accentColor,
     activeTabId,
     sortBy,
-    encryptionEnabled,
-    encryptionSalt,
-    encryptionVerifier,
   };
 }
 
@@ -204,16 +178,6 @@ function sanitizeTemplateForCloud(tpl: SnippetTemplate) {
 }
 
 function parseSettingsDoc(data: Record<string, unknown>): CloudSettingsRecord {
-  const encryptionEnabled = data.encryptionEnabled === true;
-  const encryptionSalt =
-    encryptionEnabled && typeof data.encryptionSalt === 'string'
-      ? data.encryptionSalt
-      : '';
-  const encryptionVerifier =
-    encryptionEnabled && typeof data.encryptionVerifier === 'string'
-      ? data.encryptionVerifier
-      : '';
-
   return {
     theme: data.theme === 'dark' ? 'dark' : 'light',
     themePreset: normalizeThemePreset(data.themePreset),
@@ -223,69 +187,42 @@ function parseSettingsDoc(data: Record<string, unknown>): CloudSettingsRecord {
       data.sortBy === 'usage' || data.sortBy === 'title'
         ? data.sortBy
         : 'updated',
-    encryptionEnabled: Boolean(encryptionEnabled && encryptionSalt && encryptionVerifier),
-    encryptionSalt,
-    encryptionVerifier,
   };
 }
 
-async function safeDecryptField(
-  value: unknown,
-  fallback: string,
-  key: CryptoKey | null
-): Promise<string> {
-  if (typeof value !== 'string') return fallback;
-  if (!isEncryptedValue(value)) return value;
-  if (!key) return fallback;
-  try {
-    return await decryptString(value, key);
-  } catch {
-    return fallback;
-  }
-}
-
-async function parseTabDoc(
-  id: string,
-  data: Record<string, unknown>,
-  key: CryptoKey | null
-): Promise<WorkspaceTab> {
-  const name = await safeDecryptField(data.name, 'Untitled Tab', key);
+function parseTabDoc(id: string, data: Record<string, unknown>): WorkspaceTab {
+  const name = typeof data.name === 'string' && data.name ? data.name : 'Untitled Tab';
   return {
     id,
-    name: name || 'Untitled Tab',
+    name,
     order: typeof data.order === 'number' ? data.order : 0,
     createdAt: timestampToIso(data.createdAt),
   };
 }
 
-async function parseCategoryDoc(
+function parseCategoryDoc(
   id: string,
-  data: Record<string, unknown>,
-  key: CryptoKey | null
-): Promise<TemplateCategory> {
-  const name = await safeDecryptField(data.name, 'General', key);
+  data: Record<string, unknown>
+): TemplateCategory {
+  const name = typeof data.name === 'string' && data.name ? data.name : 'General';
   return {
     id,
     tabId: typeof data.tabId === 'string' ? data.tabId : '',
-    name: name || 'General',
+    name,
     order: typeof data.order === 'number' ? data.order : 0,
   };
 }
 
-async function parseTemplateDoc(
+function parseTemplateDoc(
   id: string,
   data: Record<string, unknown>,
-  key: CryptoKey | null,
   localHistory?: SnippetTemplate['history']
-): Promise<SnippetTemplate> {
-  const title = await safeDecryptField(data.title, 'Untitled Template', key);
-  const content = await safeDecryptField(data.content, '', key);
-  const rawTags = Array.isArray(data.tags)
-    ? data.tags.filter((t): t is string => typeof t === 'string')
+): SnippetTemplate {
+  const title = typeof data.title === 'string' ? data.title : 'Untitled Template';
+  const content = typeof data.content === 'string' ? data.content : '';
+  const tags = Array.isArray(data.tags)
+    ? data.tags.filter((t): t is string => typeof t === 'string' && t.length > 0)
     : [];
-  const tags = (
-    await Promise.all(rawTags.map((tag) => safeDecryptField(tag, '', key)))
-  ).filter((tag) => tag.length > 0);
 
   return {
     id,
@@ -306,11 +243,10 @@ async function parseTemplateDoc(
 }
 
 /**
- * Fetches the user's complete cloud workspace snapshot once (used on sign-in or vault unlock).
+ * Fetches the user's complete cloud workspace snapshot once (used on sign-in).
  */
 export async function fetchCloudWorkspace(
-  uid: string,
-  encryptionKey: CryptoKey | null = null
+  uid: string
 ): Promise<CloudWorkspaceSnapshot> {
   const userPath = `users/${uid}`;
   let userSnap;
@@ -323,7 +259,6 @@ export async function fetchCloudWorkspace(
   if (!userSnap.exists()) {
     return {
       exists: false,
-      requiresUnlock: false,
       settings: null,
       tabs: [],
       categories: [],
@@ -332,18 +267,6 @@ export async function fetchCloudWorkspace(
   }
 
   const settings = parseSettingsDoc(userSnap.data() as Record<string, unknown>);
-
-  // If this account uses E2EE and the vault isn't unlocked yet, pause before loading encrypted docs
-  if (settings.encryptionEnabled && !encryptionKey) {
-    return {
-      exists: true,
-      requiresUnlock: true,
-      settings,
-      tabs: [],
-      categories: [],
-      templates: [],
-    };
-  }
 
   const tabsPath = `users/${uid}/tabs`;
   const categoriesPath = `users/${uid}/categories`;
@@ -382,33 +305,20 @@ export async function fetchCloudWorkspace(
     handleFirestoreError(error, OperationType.LIST, templatesPath);
   }
 
-  const activeKey = settings.encryptionEnabled ? encryptionKey : null;
+  const tabs = tabsSnap.docs
+    .map((d) => parseTabDoc(d.id, d.data() as Record<string, unknown>))
+    .sort((a, b) => a.order - b.order);
 
-  const tabs = (
-    await Promise.all(
-      tabsSnap.docs.map((d) =>
-        parseTabDoc(d.id, d.data() as Record<string, unknown>, activeKey)
-      )
-    )
-  ).sort((a, b) => a.order - b.order);
+  const categories = catsSnap.docs
+    .map((d) => parseCategoryDoc(d.id, d.data() as Record<string, unknown>))
+    .sort((a, b) => a.order - b.order);
 
-  const categories = (
-    await Promise.all(
-      catsSnap.docs.map((d) =>
-        parseCategoryDoc(d.id, d.data() as Record<string, unknown>, activeKey)
-      )
-    )
-  ).sort((a, b) => a.order - b.order);
-
-  const templates = await Promise.all(
-    tplsSnap.docs.map((d) =>
-      parseTemplateDoc(d.id, d.data() as Record<string, unknown>, activeKey)
-    )
+  const templates = tplsSnap.docs.map((d) =>
+    parseTemplateDoc(d.id, d.data() as Record<string, unknown>)
   );
 
   return {
     exists: true,
-    requiresUnlock: false,
     settings,
     tabs,
     categories,
@@ -441,31 +351,16 @@ async function commitChunkedOperations(
 }
 
 /**
- * Computes a minimal diff between `previous` (last known decrypted cloud state) and `next` (local state),
- * encrypts sensitive fields with AES-256-GCM when E2EE is enabled, and commits only changed docs.
+ * Computes a minimal diff between `previous` (last known cloud state) and `next` (local state)
+ * and commits only changed docs to Firestore.
  */
 export async function syncWorkspaceDiffToCloud(
   uid: string,
   next: WorkspaceData,
-  previous: CloudWorkspaceSnapshot | null,
-  options?: SyncEncryptionOptions
+  previous: CloudWorkspaceSnapshot | null
 ): Promise<CloudWorkspaceSnapshot> {
   const operations: BatchOperation[] = [];
-  const activeEncConfig: CloudEncryptionConfig | undefined =
-    options?.encryptionConfig ??
-    (previous?.settings
-      ? {
-          enabled: previous.settings.encryptionEnabled,
-          salt: previous.settings.encryptionSalt,
-          verifier: previous.settings.encryptionVerifier,
-        }
-      : undefined);
-
-  const shouldEncrypt = Boolean(activeEncConfig?.enabled && options?.encryptionKey);
-  const encKey = shouldEncrypt ? options?.encryptionKey ?? null : null;
-  const forceAll = Boolean(options?.forceReencryptAll);
-
-  const nextSettings = sanitizeSettingsForCloud(next, activeEncConfig);
+  const nextSettings = sanitizeSettingsForCloud(next);
   const userRef = doc(db, 'users', uid);
 
   const hasParentDoc = Boolean(previous?.exists);
@@ -490,31 +385,7 @@ export async function syncWorkspaceDiffToCloud(
       prevS.activeTabId !== nextSettings.activeTabId ||
       prevS.sortBy !== nextSettings.sortBy;
 
-    const encMetaChanged =
-      !prevS ||
-      prevS.encryptionEnabled !== nextSettings.encryptionEnabled ||
-      prevS.encryptionSalt !== nextSettings.encryptionSalt ||
-      prevS.encryptionVerifier !== nextSettings.encryptionVerifier;
-
-    if (prefChanged && encMetaChanged) {
-      operations.push({
-        run: (batch) =>
-          batch.update(userRef, {
-            ...nextSettings,
-            updatedAt: serverTimestamp(),
-          }),
-      });
-    } else if (encMetaChanged) {
-      operations.push({
-        run: (batch) =>
-          batch.update(userRef, {
-            encryptionEnabled: nextSettings.encryptionEnabled,
-            encryptionSalt: nextSettings.encryptionSalt,
-            encryptionVerifier: nextSettings.encryptionVerifier,
-            updatedAt: serverTimestamp(),
-          }),
-      });
-    } else if (prefChanged) {
+    if (prefChanged) {
       operations.push({
         run: (batch) =>
           batch.update(userRef, {
@@ -540,33 +411,26 @@ export async function syncWorkspaceDiffToCloud(
     const prevTab = prevTabsMap.get(safeId);
     const tabRef = doc(db, 'users', uid, 'tabs', safeId);
 
-    const needsCreate = !prevTab;
-    const needsUpdate =
-      forceAll || (prevTab && (prevTab.name !== clean.name || prevTab.order !== clean.order));
-
-    if (needsCreate || needsUpdate) {
-      const storedName = encKey ? await encryptString(clean.name, encKey) : clean.name;
-      if (needsCreate) {
-        operations.push({
-          run: (batch) =>
-            batch.set(tabRef, {
-              ownerId: uid,
-              name: storedName,
-              order: clean.order,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            }),
-        });
-      } else {
-        operations.push({
-          run: (batch) =>
-            batch.update(tabRef, {
-              name: storedName,
-              order: clean.order,
-              updatedAt: serverTimestamp(),
-            }),
-        });
-      }
+    if (!prevTab) {
+      operations.push({
+        run: (batch) =>
+          batch.set(tabRef, {
+            ownerId: uid,
+            name: clean.name,
+            order: clean.order,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }),
+      });
+    } else if (prevTab.name !== clean.name || prevTab.order !== clean.order) {
+      operations.push({
+        run: (batch) =>
+          batch.update(tabRef, {
+            name: clean.name,
+            order: clean.order,
+            updatedAt: serverTimestamp(),
+          }),
+      });
     }
   }
 
@@ -590,39 +454,32 @@ export async function syncWorkspaceDiffToCloud(
     const prevCat = prevCatsMap.get(safeId);
     const catRef = doc(db, 'users', uid, 'categories', safeId);
 
-    const needsCreate = !prevCat;
-    const needsUpdate =
-      forceAll ||
-      (prevCat &&
-        (prevCat.tabId !== clean.tabId ||
-          prevCat.name !== clean.name ||
-          prevCat.order !== clean.order));
-
-    if (needsCreate || needsUpdate) {
-      const storedName = encKey ? await encryptString(clean.name, encKey) : clean.name;
-      if (needsCreate) {
-        operations.push({
-          run: (batch) =>
-            batch.set(catRef, {
-              ownerId: uid,
-              tabId: clean.tabId,
-              name: storedName,
-              order: clean.order,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            }),
-        });
-      } else {
-        operations.push({
-          run: (batch) =>
-            batch.update(catRef, {
-              tabId: clean.tabId,
-              name: storedName,
-              order: clean.order,
-              updatedAt: serverTimestamp(),
-            }),
-        });
-      }
+    if (!prevCat) {
+      operations.push({
+        run: (batch) =>
+          batch.set(catRef, {
+            ownerId: uid,
+            tabId: clean.tabId,
+            name: clean.name,
+            order: clean.order,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }),
+      });
+    } else if (
+      prevCat.tabId !== clean.tabId ||
+      prevCat.name !== clean.name ||
+      prevCat.order !== clean.order
+    ) {
+      operations.push({
+        run: (batch) =>
+          batch.update(catRef, {
+            tabId: clean.tabId,
+            name: clean.name,
+            order: clean.order,
+            updatedAt: serverTimestamp(),
+          }),
+      });
     }
   }
 
@@ -652,21 +509,15 @@ export async function syncWorkspaceDiffToCloud(
     const tplRef = doc(db, 'users', uid, 'templates', safeId);
 
     if (!prevTpl) {
-      const storedTitle = encKey ? await encryptString(clean.title, encKey) : clean.title;
-      const storedContent = encKey ? await encryptString(clean.content, encKey) : clean.content;
-      const storedTags = encKey
-        ? await Promise.all(clean.tags.map((tag) => encryptString(tag, encKey)))
-        : clean.tags;
-
       operations.push({
         run: (batch) =>
           batch.set(tplRef, {
             ownerId: uid,
             tabId: clean.tabId,
             categoryId: clean.categoryId,
-            title: storedTitle,
-            content: storedContent,
-            tags: storedTags,
+            title: clean.title,
+            content: clean.content,
+            tags: clean.tags,
             usageCount: clean.usageCount,
             lastCopiedAt: clean.lastCopiedAt,
             createdAt: serverTimestamp(),
@@ -679,7 +530,6 @@ export async function syncWorkspaceDiffToCloud(
       const prevLastCopied = prevTpl.lastCopiedAt || '';
 
       const contentOrMetaChanged =
-        forceAll ||
         prevTpl.tabId !== clean.tabId ||
         prevTpl.categoryId !== clean.categoryId ||
         prevTpl.title !== clean.title ||
@@ -691,40 +541,28 @@ export async function syncWorkspaceDiffToCloud(
         prevLastCopied !== clean.lastCopiedAt;
 
       if (contentOrMetaChanged && usageChanged) {
-        const storedTitle = encKey ? await encryptString(clean.title, encKey) : clean.title;
-        const storedContent = encKey ? await encryptString(clean.content, encKey) : clean.content;
-        const storedTags = encKey
-          ? await Promise.all(clean.tags.map((tag) => encryptString(tag, encKey)))
-          : clean.tags;
-
         operations.push({
           run: (batch) =>
             batch.update(tplRef, {
               tabId: clean.tabId,
               categoryId: clean.categoryId,
-              title: storedTitle,
-              content: storedContent,
-              tags: storedTags,
+              title: clean.title,
+              content: clean.content,
+              tags: clean.tags,
               usageCount: clean.usageCount,
               lastCopiedAt: clean.lastCopiedAt,
               updatedAt: serverTimestamp(),
             }),
         });
       } else if (contentOrMetaChanged) {
-        const storedTitle = encKey ? await encryptString(clean.title, encKey) : clean.title;
-        const storedContent = encKey ? await encryptString(clean.content, encKey) : clean.content;
-        const storedTags = encKey
-          ? await Promise.all(clean.tags.map((tag) => encryptString(tag, encKey)))
-          : clean.tags;
-
         operations.push({
           run: (batch) =>
             batch.update(tplRef, {
               tabId: clean.tabId,
               categoryId: clean.categoryId,
-              title: storedTitle,
-              content: storedContent,
-              tags: storedTags,
+              title: clean.title,
+              content: clean.content,
+              tags: clean.tags,
               updatedAt: serverTimestamp(),
             }),
         });
@@ -754,7 +592,6 @@ export async function syncWorkspaceDiffToCloud(
 
   return {
     exists: true,
-    requiresUnlock: false,
     settings: nextSettings,
     tabs: Array.from(nextTabsMap.values()).sort((a, b) => a.order - b.order),
     categories: Array.from(nextCatsMap.values()).sort(
@@ -766,23 +603,27 @@ export async function syncWorkspaceDiffToCloud(
 
 /**
  * Subscribes to live Firestore changes across the user's settings, tabs, categories, and templates.
- * Transparently decrypts incoming updates when an active E2EE key is loaded in memory.
  */
 export function subscribeToCloudWorkspace(
   uid: string,
-  getEncryptionKey: () => CryptoKey | null,
   onRemoteUpdate: (snapshot: CloudWorkspaceSnapshot) => void,
   onError: (err: Error) => void
 ): () => void {
   let settings: CloudSettingsRecord | null = null;
   let exists = false;
-  let rawTabDocs: { id: string; data: Record<string, unknown> }[] = [];
-  let rawCatDocs: { id: string; data: Record<string, unknown> }[] = [];
-  let rawTplDocs: { id: string; data: Record<string, unknown> }[] = [];
-  let emitSequence = 0;
+  let tabs: WorkspaceTab[] = [];
+  let categories: TemplateCategory[] = [];
+  let templates: SnippetTemplate[] = [];
   let unsubscribed = false;
 
   const ready = {
+    settings: false,
+    tabs: false,
+    categories: false,
+    templates: false,
+  };
+
+  const pendingWrites = {
     settings: false,
     tabs: false,
     categories: false,
@@ -795,48 +636,22 @@ export function subscribeToCloudWorkspace(
       !ready.settings ||
       !ready.tabs ||
       !ready.categories ||
-      !ready.templates
+      !ready.templates ||
+      pendingWrites.settings ||
+      pendingWrites.tabs ||
+      pendingWrites.categories ||
+      pendingWrites.templates
     ) {
       return;
     }
 
-    const mySeq = ++emitSequence;
-    const currentKey = getEncryptionKey();
-
-    if (settings?.encryptionEnabled && !currentKey) {
-      onRemoteUpdate({
-        exists,
-        requiresUnlock: true,
-        settings,
-        tabs: [],
-        categories: [],
-        templates: [],
-      });
-      return;
-    }
-
-    const activeKey = settings?.encryptionEnabled ? currentKey : null;
-
-    void Promise.all([
-      Promise.all(rawTabDocs.map((d) => parseTabDoc(d.id, d.data, activeKey))),
-      Promise.all(rawCatDocs.map((d) => parseCategoryDoc(d.id, d.data, activeKey))),
-      Promise.all(rawTplDocs.map((d) => parseTemplateDoc(d.id, d.data, activeKey))),
-    ])
-      .then(([tabs, categories, templates]) => {
-        if (unsubscribed || mySeq !== emitSequence) return;
-        onRemoteUpdate({
-          exists,
-          requiresUnlock: false,
-          settings,
-          tabs: tabs.sort((a, b) => a.order - b.order),
-          categories: categories.sort((a, b) => a.order - b.order),
-          templates,
-        });
-      })
-      .catch((err) => {
-        if (unsubscribed) return;
-        onError(err instanceof Error ? err : new Error(String(err)));
-      });
+    onRemoteUpdate({
+      exists,
+      settings,
+      tabs,
+      categories,
+      templates,
+    });
   };
 
   const handleListenerError = (err: unknown, op: OperationType, path: string) => {
@@ -850,7 +665,14 @@ export function subscribeToCloudWorkspace(
   const unsubSettings = onSnapshot(
     doc(db, 'users', uid),
     (snap) => {
-      if (snap.metadata.hasPendingWrites) return;
+      if (snap.metadata.hasPendingWrites) {
+        pendingWrites.settings = true;
+        return;
+      }
+      if (snap.metadata.fromCache) {
+        return;
+      }
+      pendingWrites.settings = false;
       exists = snap.exists();
       settings = snap.exists()
         ? parseSettingsDoc(snap.data() as Record<string, unknown>)
@@ -864,11 +686,17 @@ export function subscribeToCloudWorkspace(
   const unsubTabs = onSnapshot(
     query(collection(db, 'users', uid, 'tabs'), where('ownerId', '==', uid)),
     (snap) => {
-      if (snap.metadata.hasPendingWrites) return;
-      rawTabDocs = snap.docs.map((d) => ({
-        id: d.id,
-        data: d.data() as Record<string, unknown>,
-      }));
+      if (snap.metadata.hasPendingWrites) {
+        pendingWrites.tabs = true;
+        return;
+      }
+      if (snap.metadata.fromCache) {
+        return;
+      }
+      pendingWrites.tabs = false;
+      tabs = snap.docs
+        .map((d) => parseTabDoc(d.id, d.data() as Record<string, unknown>))
+        .sort((a, b) => a.order - b.order);
       ready.tabs = true;
       emitIfReady();
     },
@@ -881,11 +709,17 @@ export function subscribeToCloudWorkspace(
       where('ownerId', '==', uid)
     ),
     (snap) => {
-      if (snap.metadata.hasPendingWrites) return;
-      rawCatDocs = snap.docs.map((d) => ({
-        id: d.id,
-        data: d.data() as Record<string, unknown>,
-      }));
+      if (snap.metadata.hasPendingWrites) {
+        pendingWrites.categories = true;
+        return;
+      }
+      if (snap.metadata.fromCache) {
+        return;
+      }
+      pendingWrites.categories = false;
+      categories = snap.docs
+        .map((d) => parseCategoryDoc(d.id, d.data() as Record<string, unknown>))
+        .sort((a, b) => a.order - b.order);
       ready.categories = true;
       emitIfReady();
     },
@@ -899,11 +733,17 @@ export function subscribeToCloudWorkspace(
       where('ownerId', '==', uid)
     ),
     (snap) => {
-      if (snap.metadata.hasPendingWrites) return;
-      rawTplDocs = snap.docs.map((d) => ({
-        id: d.id,
-        data: d.data() as Record<string, unknown>,
-      }));
+      if (snap.metadata.hasPendingWrites) {
+        pendingWrites.templates = true;
+        return;
+      }
+      if (snap.metadata.fromCache) {
+        return;
+      }
+      pendingWrites.templates = false;
+      templates = snap.docs.map((d) =>
+        parseTemplateDoc(d.id, d.data() as Record<string, unknown>)
+      );
       ready.templates = true;
       emitIfReady();
     },
@@ -924,41 +764,176 @@ export function subscribeToCloudWorkspace(
  * Checks if a local workspace has meaningful user-authored content beyond the default starter templates.
  */
 export function hasCustomLocalContent(workspace: WorkspaceData): boolean {
-  const starterTabIds = new Set(['tab-support', 'tab-sales', 'tab-eng']);
-  const starterTplIds = new Set([
-    'tpl-ack',
-    'tpl-escalate',
-    'tpl-resolved',
-    'tpl-intro',
-    'tpl-recap',
-    'tpl-pr',
-    'tpl-incident',
-  ]);
+  const starter = createStarterWorkspace();
+  const starterTabs = new Map(starter.tabs.map((t) => [t.id, t]));
+  const starterCategories = new Map(starter.categories.map((c) => [c.id, c]));
+  const starterTemplates = new Map(starter.templates.map((t) => [t.id, t]));
 
-  if (workspace.tabs.some((t) => !starterTabIds.has(t.id))) return true;
-  if (workspace.templates.some((t) => !starterTplIds.has(t.id))) return true;
-  if (workspace.templates.some((t) => t.usageCount > 0)) return true;
+  if (
+    workspace.tabs.some((t) => {
+      const base = starterTabs.get(t.id);
+      return !base || base.name !== t.name;
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    workspace.categories.some((c) => {
+      const base = starterCategories.get(c.id);
+      return !base || base.name !== c.name || base.tabId !== c.tabId;
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    workspace.templates.some((t) => {
+      const base = starterTemplates.get(t.id);
+      if (!base) return true;
+      if (
+        base.title !== t.title ||
+        base.content !== t.content ||
+        base.tabId !== t.tabId ||
+        base.categoryId !== t.categoryId ||
+        base.tags.join('|') !== t.tags.join('|')
+      ) {
+        return true;
+      }
+      return t.usageCount > base.usageCount;
+    })
+  ) {
+    return true;
+  }
+
   return false;
 }
 
 /**
+ * Returns true when a remote CloudWorkspaceSnapshot is semantically identical to the
+ * current local workspace (ignoring volatile serverTimestamp updatedAt/createdAt drift).
+ * Prevents redundant state resets when Firestore echoes back our own committed writes.
+ */
+export function isRemoteSnapshotEquivalentToLocal(
+  local: WorkspaceData,
+  cloud: CloudWorkspaceSnapshot
+): boolean {
+  const localSettings = sanitizeSettingsForCloud(local);
+  if (cloud.settings) {
+    if (
+      localSettings.theme !== cloud.settings.theme ||
+      localSettings.themePreset !== cloud.settings.themePreset ||
+      localSettings.accentColor !== cloud.settings.accentColor ||
+      localSettings.sortBy !== cloud.settings.sortBy
+    ) {
+      return false;
+    }
+  }
+
+  if (local.tabs.length !== cloud.tabs.length) return false;
+  const cloudTabsById = new Map(cloud.tabs.map((t) => [t.id, t]));
+  for (const localTab of local.tabs) {
+    const clean = sanitizeTabForCloud(localTab);
+    const remote = cloudTabsById.get(localTab.id);
+    if (!remote || remote.name !== clean.name || remote.order !== clean.order) {
+      return false;
+    }
+  }
+
+  if (local.categories.length !== cloud.categories.length) return false;
+  const cloudCatsById = new Map(cloud.categories.map((c) => [c.id, c]));
+  for (const localCat of local.categories) {
+    const clean = sanitizeCategoryForCloud(localCat);
+    const remote = cloudCatsById.get(localCat.id);
+    if (
+      !remote ||
+      remote.tabId !== clean.tabId ||
+      remote.name !== clean.name ||
+      remote.order !== clean.order
+    ) {
+      return false;
+    }
+  }
+
+  if (local.templates.length !== cloud.templates.length) return false;
+  const cloudTplsById = new Map(cloud.templates.map((t) => [t.id, t]));
+  for (const localTpl of local.templates) {
+    const clean = sanitizeTemplateForCloud(localTpl);
+    const remote = cloudTplsById.get(localTpl.id);
+    if (!remote) return false;
+    const remoteTags = remote.tags || [];
+    if (
+      remote.tabId !== clean.tabId ||
+      remote.categoryId !== clean.categoryId ||
+      remote.title !== clean.title ||
+      remote.content !== clean.content ||
+      remote.usageCount !== clean.usageCount ||
+      (remote.lastCopiedAt || '') !== clean.lastCopiedAt ||
+      remoteTags.length !== clean.tags.length ||
+      remoteTags.some((tag, idx) => tag !== clean.tags[idx])
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * Applies a CloudWorkspaceSnapshot cleanly onto the current local workspace,
- * preserving local-only version history and keeping active selections valid.
+ * preserving local-only version history, keeping active selections valid,
+ * and protecting any locally dirty templates from being overwritten by stale snapshots.
  */
 export function mergeSnapshotIntoLocalWorkspace(
   currentLocal: WorkspaceData,
-  cloud: CloudWorkspaceSnapshot
+  cloud: CloudWorkspaceSnapshot,
+  options?: {
+    protectedTemplateIds?: ReadonlySet<string>;
+    excludedTemplateIds?: ReadonlySet<string>;
+  }
 ): WorkspaceData {
+  const protectedIds = options?.protectedTemplateIds;
+  const excludedIds = options?.excludedTemplateIds;
+  const localById = new Map(currentLocal.templates.map((t) => [t.id, t]));
   const localHistoryMap = new Map(
     currentLocal.templates.map((t) => [t.id, t.history ?? []])
   );
 
   const tabs = cloud.tabs.length > 0 ? cloud.tabs : currentLocal.tabs;
   const categories = cloud.categories;
-  const templates = cloud.templates.map((t) => ({
-    ...t,
-    history: localHistoryMap.get(t.id) ?? [],
-  }));
+
+  const seenIds = new Set<string>();
+  const templates: SnippetTemplate[] = [];
+  for (const remoteTpl of cloud.templates) {
+    if (excludedIds?.has(remoteTpl.id)) {
+      continue;
+    }
+    seenIds.add(remoteTpl.id);
+    if (protectedIds?.has(remoteTpl.id)) {
+      const localTpl = localById.get(remoteTpl.id);
+      if (localTpl) {
+        templates.push(localTpl);
+        continue;
+      }
+    }
+    templates.push({
+      ...remoteTpl,
+      history: localHistoryMap.get(remoteTpl.id) ?? [],
+    });
+  }
+
+  // Retain newly created local templates that are still pending cloud sync
+  if (protectedIds && protectedIds.size > 0) {
+    for (const localTpl of currentLocal.templates) {
+      if (
+        protectedIds.has(localTpl.id) &&
+        !excludedIds?.has(localTpl.id) &&
+        !seenIds.has(localTpl.id)
+      ) {
+        templates.unshift(localTpl);
+      }
+    }
+  }
 
   const validTabIds = new Set(tabs.map((t) => t.id));
   const preferredTabId =

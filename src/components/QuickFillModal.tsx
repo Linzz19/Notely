@@ -100,88 +100,95 @@ export const QuickFillModal: React.FC<QuickFillModalProps> = ({
           </button>
         </div>
 
-        {/* Body: Left Inputs + Right Live Preview */}
-        <form
-          onSubmit={handleSubmit}
-          className="flex-1 min-h-0 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[var(--surface-border)]"
-        >
-          {/* Variable Inputs */}
-          <div className="w-full md:w-[300px] shrink-0 p-4 overflow-y-auto space-y-3 bg-[var(--surface-sidebar)]">
-            {variables.map((v, idx) => (
-              <div key={v.name} className="space-y-1">
-                <label
-                  htmlFor={`var-input-${v.name}`}
-                  className="block font-mono text-xs font-medium text-slate-700 dark:text-slate-300"
-                >
-                  {v.name}
-                  {v.defaultValue && (
-                    <span className="ml-1.5 font-sans text-[11px] font-normal text-slate-400">
-                      (default: {v.defaultValue})
-                    </span>
-                  )}
-                </label>
-                <input
-                  id={`var-input-${v.name}`}
-                  ref={idx === 0 ? firstInputRef : undefined}
-                  type="text"
-                  value={values[v.name] ?? ''}
-                  onChange={(e) =>
-                    setValues((prev) => ({ ...prev, [v.name]: e.target.value }))
-                  }
-                  placeholder={v.defaultValue || `Enter ${v.name}...`}
-                  className="w-full h-9 px-3 text-[13px] bg-[var(--surface-input)] border border-[var(--surface-border)] rounded-md text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-[var(--accent)]"
-                />
+        {/* Body + Footer inside form so Enter always submits even with multiple variable inputs */}
+        <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 min-h-0 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[var(--surface-border)]">
+            {/* Variable Inputs */}
+            <div className="w-full md:w-[300px] shrink-0 p-4 overflow-y-auto space-y-3 bg-[var(--surface-sidebar)]">
+              {variables.map((v, idx) => (
+                <div key={v.name} className="space-y-1">
+                  <label
+                    htmlFor={`var-input-${v.name}`}
+                    className="block font-mono text-xs font-medium text-slate-700 dark:text-slate-300"
+                  >
+                    {v.name}
+                    {v.defaultValue && (
+                      <span className="ml-1.5 font-sans text-[11px] font-normal text-slate-400">
+                        (default: {v.defaultValue})
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    id={`var-input-${v.name}`}
+                    ref={idx === 0 ? firstInputRef : undefined}
+                    type="text"
+                    value={values[v.name] ?? ''}
+                    onChange={(e) =>
+                      setValues((prev) => ({ ...prev, [v.name]: e.target.value }))
+                    }
+                    placeholder={v.defaultValue || `Enter ${v.name}...`}
+                    className="w-full h-9 px-3 text-[13px] bg-[var(--surface-input)] border border-[var(--surface-border)] rounded-md text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-[var(--accent)]"
+                  />
+                </div>
+              ))}
+            </div>
+
+            {/* Live Preview */}
+            <div className="flex-1 min-w-0 p-5 overflow-y-auto bg-[var(--surface-panel)]">
+              <div className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 mb-3">
+                Live Output Preview
               </div>
-            ))}
+              <div
+                className="template-prose text-slate-800 dark:text-slate-200"
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
+            </div>
           </div>
 
-          {/* Live Preview */}
-          <div className="flex-1 min-w-0 p-5 overflow-y-auto bg-[var(--surface-panel)]">
-            <div className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 mb-3">
-              Live Output Preview
+          {/* Footer Actions */}
+          <div className="px-5 py-3 border-t border-[var(--surface-border)] bg-[var(--surface-sidebar)] flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => onConfirmCopy(template.content, requestedFormat)}
+              className="h-8 px-3 rounded-md border border-[var(--surface-border)] bg-[var(--surface-elevated)] text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-[var(--surface-hover)] transition-colors"
+            >
+              Copy Raw {'{{vars}}'}
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-8 px-3 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type={requestedFormat === 'plain' ? 'submit' : 'button'}
+                onClick={
+                  requestedFormat === 'plain'
+                    ? undefined
+                    : () => onConfirmCopy(substitutedContent, 'plain')
+                }
+                className="h-8 px-3 rounded-md border border-[var(--surface-border)] bg-[var(--surface-elevated)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                Copy Plain Text
+              </button>
+              <button
+                type={requestedFormat === 'plain' ? 'button' : 'submit'}
+                onClick={
+                  requestedFormat === 'plain'
+                    ? () => onConfirmCopy(substitutedContent, 'rich')
+                    : undefined
+                }
+                className="flex items-center gap-1.5 h-8 px-4 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy Formatted</span>
+              </button>
             </div>
-            <div
-              className="template-prose text-slate-800 dark:text-slate-200"
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-            />
           </div>
         </form>
-
-        {/* Footer Actions */}
-        <div className="px-5 py-3 border-t border-[var(--surface-border)] bg-[var(--surface-sidebar)] flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => onConfirmCopy(template.content, requestedFormat)}
-            className="h-8 px-3 rounded-md border border-[var(--surface-border)] bg-[var(--surface-elevated)] text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-[var(--surface-hover)] transition-colors"
-          >
-            Copy Raw {'{{vars}}'}
-          </button>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-8 px-3 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--surface-hover)] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => onConfirmCopy(substitutedContent, 'plain')}
-              className="h-8 px-3 rounded-md border border-[var(--surface-border)] bg-[var(--surface-elevated)] text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-hover)] transition-colors"
-            >
-              Copy Plain Text
-            </button>
-            <button
-              type="button"
-              onClick={() => onConfirmCopy(substitutedContent, 'rich')}
-              className="flex items-center gap-1.5 h-8 px-4 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-fg)] text-xs font-semibold transition-colors"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>Copy Formatted</span>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

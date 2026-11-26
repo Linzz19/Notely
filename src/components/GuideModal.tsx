@@ -251,6 +251,9 @@ export const GuideModal: React.FC<GuideModalProps> = ({ onClose }) => {
                 <strong>Category &amp; Tags:</strong> Assign a template to any category (or click <strong>+</strong> beside the dropdown to create a new category on the spot) and press <kbd className="font-mono text-[11px] px-1 py-0.5 rounded bg-[var(--surface-frame)] border border-[var(--surface-border)]">Enter</kbd> or comma to attach searchable tags.
               </div>
               <div>
+                <strong>Offline Smart Suggestions:</strong> Click <strong>Suggest</strong> on the right side of the editor toolbar to generate a concise title, matching existing or new categories, and relevant tags directly from your template text and active tab — 100% offline with zero API calls.
+              </div>
+              <div>
                 <strong>Version History (Last 3 Edits):</strong> Click <strong>History</strong> in the template toolbar to inspect and restore up to the last 3 previous content versions saved automatically whenever you edit.
               </div>
               <div>
